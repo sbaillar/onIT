@@ -16,6 +16,10 @@
 
 #include <Arduino_GFX_Library.h>
 #include <Wire.h>
+#include <Adafruit_GFX.h>   // only for its Fonts/ include path
+#include <Fonts/FreeSansBold18pt7b.h>
+#include <Fonts/FreeSansBold12pt7b.h>
+#include <Fonts/FreeSansBold9pt7b.h>
 
 // ---------------------------------------------------------------- pins
 #define LCD_SCK   10
@@ -81,12 +85,14 @@ void ringDashed(int16_t r, int16_t w, uint16_t color, int nSeg, float onDeg) {
   }
 }
 
-void textCentered(const char *s, int16_t cy, uint8_t size, uint16_t color) {
-  gfx->setTextSize(size);
+// cy = vertical center of the rendered text (GFX free fonts draw from baseline)
+void textCentered(const char *s, int16_t cy, const GFXfont *font, uint16_t color) {
+  gfx->setFont(font);
+  gfx->setTextSize(1);
   gfx->setTextColor(color);
   int16_t x1, y1; uint16_t tw, th;
   gfx->getTextBounds(s, 0, 0, &x1, &y1, &tw, &th);
-  gfx->setCursor(120 - tw / 2, cy - th / 2);
+  gfx->setCursor(120 - tw / 2 - x1, cy - th / 2 - y1);
   gfx->print(s);
 }
 
@@ -121,41 +127,41 @@ void iconShare(int cx, int cy, uint16_t color, float s = 1.9f) {
 // ---------------------------------------------------------------- state renderers
 void drawAvailable() {
   gfx->fillScreen(C_BG_IDLE);
-  ringSolid(112, 4, C_GREEN);
-  gfx->fillCircle(120, 88, 11, C_GREEN);                 // presence dot Ø22
-  textCentered("Available", 128 + 8, 4, C_WHITE);        // size4 ~= 32px
+  ringSolid(114, 4, C_GREEN);                            // thin ring, hugs the edge
+  gfx->fillCircle(120, 92, 11, C_GREEN);                 // presence dot above text
+  textCentered("Available", 136, &FreeSansBold18pt7b, C_WHITE);
   backlight(20);
 }
 
 void drawMeeting() {
   gfx->fillScreen(C_RED_BUSY);
-  ringSolid(112, 6, C_WHITE);
-  iconMic(120, 84, C_WHITE);
-  textCentered("In a call", 140 + 8, 4, C_WHITE);
+  ringSolid(114, 7, C_WHITE);
+  iconMic(120, 80, C_WHITE);
+  textCentered("In a call", 146, &FreeSansBold18pt7b, C_WHITE);
   backlight(100);
 }
 
 void drawMuted() {
   gfx->fillScreen(C_RED_DIM);
-  ringDashed(112, 8, C_RED_MRING, 24, 9.0f);             // 24 x [9 on / 6 off]
-  iconMicSlash(120, 84, C_RED_MRING, C_WHITE);
-  textCentered("Muted", 140 + 8, 4, C_WHITE);
+  ringDashed(114, 8, C_RED_MRING, 24, 9.0f);             // 24 x [9 on / 6 off]
+  iconMicSlash(120, 80, C_RED_MRING, C_WHITE);
+  textCentered("Muted", 146, &FreeSansBold18pt7b, C_WHITE);
   backlight(60);
 }
 
 void drawSharing() {
   gfx->fillScreen(C_PURPLE);
-  ringSolid(112, 8, C_WHITE);
-  iconShare(120, 80, C_WHITE);
-  textCentered("Presenting", 136 + 6, 4, C_WHITE);
-  textCentered("Do not disturb", 166 + 6, 2, C_LAVENDER);
+  ringSolid(114, 8, C_WHITE);
+  iconShare(120, 74, C_WHITE);
+  textCentered("Presenting", 134, &FreeSansBold18pt7b, C_WHITE);
+  textCentered("Do not disturb", 164, &FreeSansBold9pt7b, C_LAVENDER);
   backlight(100);
 }
 
 void drawOff() {
   gfx->fillScreen(C_BLACK);
-  ringDashed(112, 3, C_GRAY_RING, 24, 5.0f);
-  textCentered("- -", 120 + 8, 4, C_GRAY_TEXT);
+  ringDashed(114, 3, C_GRAY_RING, 48, 3.5f);             // fine dotted ring
+  textCentered("- -", 124, &FreeSansBold12pt7b, C_GRAY_TEXT);
   backlight(0);
 }
 
@@ -231,7 +237,7 @@ void loop() {
   if (state == ST_SHARING) {
     static int lastStep = -1;
     int step = (millis() % 1500) / 187;                  // 1500/8
-    if (step != lastStep) { lastStep = step; ringSolid(112, 8, PULSE_LUT[step]); }
+    if (step != lastStep) { lastStep = step; ringSolid(114, 8, PULSE_LUT[step]); }
   }
 
   delay(10);
