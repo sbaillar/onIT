@@ -3,8 +3,9 @@
 Busylight state tester — drive the display by hand, no Teams needed.
 
 Usage:
-  .venv/bin/python test_states.py            # interactive prompt
-  .venv/bin/python test_states.py meeting    # start in a state
+  ./test_states.py            # interactive prompt
+  ./test_states.py meeting    # start in a state
+  ./test_states.py cycle      # loop through all states until Ctrl-C
 
 Type a state (or its first letter) and hit enter:
   available | meeting | muted | sharing | off   (a/m/u/s/o)
@@ -63,8 +64,30 @@ def resolve(text):
     return None
 
 
+def cycle(port):
+    global state, running
+    print("cycling all states, 4s each — Ctrl-C to stop")
+    try:
+        while True:
+            for s in STATES:
+                state = s
+                port.write(f"STATE:{state}\n".encode())
+                print(f"state -> {state}", flush=True)
+                time.sleep(4)
+    except KeyboardInterrupt:
+        pass
+    running = False
+    port.write(b"STATE:off\n")
+    port.close()
+
+
 def main():
     global state, running
+    if len(sys.argv) > 1 and sys.argv[1].strip().lower() == "cycle":
+        port = open_port()
+        threading.Thread(target=pump, args=(port,), daemon=True).start()
+        cycle(port)
+        return
     if len(sys.argv) > 1:
         state = resolve(sys.argv[1]) or state
     port = open_port()

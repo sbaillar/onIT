@@ -162,7 +162,7 @@ void drawOff() {
   gfx->fillScreen(C_BLACK);
   ringDashed(114, 3, C_GRAY_RING, 48, 3.5f);             // fine dotted ring
   textCentered("- -", 124, &FreeSansBold12pt7b, C_GRAY_TEXT);
-  backlight(0);
+  backlight(12);                                         // dim but visible
 }
 
 void setState(State s) {
