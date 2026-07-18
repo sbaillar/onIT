@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/Users/sbaillar/src/onIT/.venv/bin/python
 """
 Busylight state tester — drive the display by hand, no Teams needed.
 

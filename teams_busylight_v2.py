@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/Users/sbaillar/src/onIT/.venv/bin/python
 """
 Teams Busylight Agent v2 (macOS) — bidirectional
 Teams local WebSocket API (localhost:8124)  <->  ESP32-S3 round LCD (USB serial)
