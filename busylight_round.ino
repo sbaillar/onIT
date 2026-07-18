@@ -1,0 +1,238 @@
+/*
+ * Teams Busylight — Theme 1e "TEAMS"
+ * Waveshare ESP32-S3-Touch-LCD-1.28 (GC9A01 240x240 round, CST816S touch)
+ *
+ * Library: "GFX Library for Arduino" (moononournation Arduino_GFX)
+ * Board:   ESP32S3 Dev Module (USB CDC not needed - CH343P bridges UART0)
+ *
+ * Serial in : STATE:available|meeting|muted|sharing|off   @115200
+ * Serial out: CMD:toggle-mute   (tap, states meeting/muted only)
+ * Watchdog  : no serial for 5s -> OFF/STALE
+ *
+ * NOTE ON PINS: values below match the Waveshare wiki demo for this board.
+ * If the panel stays black, verify LCD_RST/TP pins against
+ * waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28 for your revision.
+ */
+
+#include <Arduino_GFX_Library.h>
+#include <Wire.h>
+
+// ---------------------------------------------------------------- pins
+#define LCD_SCK   10
+#define LCD_MOSI  11
+#define LCD_MISO  12
+#define LCD_DC     8
+#define LCD_CS     9
+#define LCD_RST   14
+#define LCD_BL     2
+
+#define TP_SDA     6
+#define TP_SCL     7
+#define TP_INT     5
+#define TP_RST    13
+#define CST816S_ADDR 0x15
+
+// ---------------------------------------------------------------- palette (RGB565 from spec)
+#define C_BG_IDLE     0x1083  // #101018
+#define C_GREEN       0x962A  // #90C450
+#define C_RED_BUSY    0xC189  // #C03048
+#define C_RED_DIM     0x4043  // #400818
+#define C_RED_MRING   0xE28E  // #E05070
+#define C_PURPLE      0x6335  // #6064A8
+#define C_LAVENDER    0xDEDE  // #D8D8F0
+#define C_WHITE       0xFFFF
+#define C_BLACK       0x0000
+#define C_GRAY_RING   0x4208  // #404040
+#define C_GRAY_TEXT   0x5ACB  // #585858
+
+// Presenting pulse: 8-step ring color LUT, white -> #787CB8 -> white (sine)
+const uint16_t PULSE_LUT[8] = {
+  0xFFFF, 0xE73C, 0xB5FA, 0x8C58, 0x7BD7, 0x8C58, 0xB5FA, 0xE73C
+};
+
+// ---------------------------------------------------------------- display
+Arduino_DataBus *bus = new Arduino_ESP32SPI(LCD_DC, LCD_CS, LCD_SCK, LCD_MOSI, LCD_MISO);
+Arduino_GFX *gfx = new Arduino_GC9A01(bus, LCD_RST, 0 /*rotation*/, true /*IPS*/);
+
+enum State { ST_OFF, ST_AVAILABLE, ST_MEETING, ST_MUTED, ST_SHARING };
+State state = ST_OFF;
+
+unsigned long lastSerial   = 0;
+unsigned long lastStateChg = 0;
+unsigned long lastTouch    = 0;
+String lineBuf;
+
+// ---------------------------------------------------------------- backlight
+void backlight(uint8_t pct) {          // 0-100
+  ledcWrite(LCD_BL, (uint32_t)pct * 255 / 100);
+}
+
+// ---------------------------------------------------------------- helpers
+void ringSolid(int16_t r, int16_t w, uint16_t color) {
+  gfx->fillArc(120, 120, r, r - w, 0, 360, color);
+}
+
+// dashed ring: nSeg segments of onDeg, gap fills the rest of the pitch
+void ringDashed(int16_t r, int16_t w, uint16_t color, int nSeg, float onDeg) {
+  float pitch = 360.0f / nSeg;
+  for (int i = 0; i < nSeg; i++) {
+    float a0 = i * pitch;
+    gfx->fillArc(120, 120, r, r - w, a0, a0 + onDeg, color);
+  }
+}
+
+void textCentered(const char *s, int16_t cy, uint8_t size, uint16_t color) {
+  gfx->setTextSize(size);
+  gfx->setTextColor(color);
+  int16_t x1, y1; uint16_t tw, th;
+  gfx->getTextBounds(s, 0, 0, &x1, &y1, &tw, &th);
+  gfx->setCursor(120 - tw / 2, cy - th / 2);
+  gfx->print(s);
+}
+
+// ---- icons (spec 24x24 grid, scale s=2 -> ~46-48px, centered at cx,cy)
+void iconMic(int cx, int cy, uint16_t body, float s = 2.0f) {
+  int x0 = cx - 12 * s, y0 = cy - 12 * s;
+  gfx->fillRoundRect(x0 + 9 * s, y0 + 3 * s, 6 * s, 11 * s, 3 * s, body);      // capsule
+  gfx->drawArc(cx, y0 + 11 * s, 6 * s, 6 * s - 2, 0, 180, body);               // cradle arc
+  gfx->drawArc(cx, y0 + 11 * s, 6 * s - 1, 6 * s - 2, 0, 180, body);
+  gfx->fillRect(cx - 1, y0 + 17 * s, 3, 4 * s, body);                          // stem
+}
+
+void iconMicSlash(int cx, int cy, uint16_t mic, uint16_t slash, float s = 2.0f) {
+  iconMic(cx, cy, mic, s);
+  int x0 = cx - 12 * s, y0 = cy - 12 * s;
+  for (int off = -2; off <= 2; off++)                                          // ~2.5px stroke
+    gfx->drawLine(x0 + 4 * s + off, y0 + 2 * s, x0 + 20 * s + off, y0 + 22 * s, slash);
+}
+
+void iconShare(int cx, int cy, uint16_t color, float s = 1.9f) {
+  int x0 = cx - 12 * s, y0 = cy - 12 * s;
+  for (int t = 0; t < 2; t++)                                                  // monitor, 2px stroke
+    gfx->drawRoundRect(x0 + 2 * s + t, y0 + 4 * s + t, 20 * s - 2 * t, 13 * s - 2 * t, 2, color);
+  for (int t = -1; t <= 1; t++) {                                              // up arrow
+    gfx->drawLine(cx + t, y0 + 13 * s, cx + t, y0 + 9 * s, color);
+    gfx->drawLine(cx, y0 + 9 * s, cx - 2.5f * s, y0 + 11.5f * s, color);
+    gfx->drawLine(cx, y0 + 9 * s, cx + 2.5f * s, y0 + 11.5f * s, color);
+  }
+  gfx->fillRect(x0 + 8 * s, y0 + 20 * s, 8 * s, 2, color);                     // base
+}
+
+// ---------------------------------------------------------------- state renderers
+void drawAvailable() {
+  gfx->fillScreen(C_BG_IDLE);
+  ringSolid(112, 4, C_GREEN);
+  gfx->fillCircle(120, 88, 11, C_GREEN);                 // presence dot Ø22
+  textCentered("Available", 128 + 8, 4, C_WHITE);        // size4 ~= 32px
+  backlight(20);
+}
+
+void drawMeeting() {
+  gfx->fillScreen(C_RED_BUSY);
+  ringSolid(112, 6, C_WHITE);
+  iconMic(120, 84, C_WHITE);
+  textCentered("In a call", 140 + 8, 4, C_WHITE);
+  backlight(100);
+}
+
+void drawMuted() {
+  gfx->fillScreen(C_RED_DIM);
+  ringDashed(112, 8, C_RED_MRING, 24, 9.0f);             // 24 x [9 on / 6 off]
+  iconMicSlash(120, 84, C_RED_MRING, C_WHITE);
+  textCentered("Muted", 140 + 8, 4, C_WHITE);
+  backlight(60);
+}
+
+void drawSharing() {
+  gfx->fillScreen(C_PURPLE);
+  ringSolid(112, 8, C_WHITE);
+  iconShare(120, 80, C_WHITE);
+  textCentered("Presenting", 136 + 6, 4, C_WHITE);
+  textCentered("Do not disturb", 166 + 6, 2, C_LAVENDER);
+  backlight(100);
+}
+
+void drawOff() {
+  gfx->fillScreen(C_BLACK);
+  ringDashed(112, 3, C_GRAY_RING, 24, 5.0f);
+  textCentered("- -", 120 + 8, 4, C_GRAY_TEXT);
+  backlight(0);
+}
+
+void setState(State s) {
+  if (s == state) return;
+  state = s;
+  lastStateChg = millis();
+  switch (state) {
+    case ST_AVAILABLE: drawAvailable(); break;
+    case ST_MEETING:   drawMeeting();   break;
+    case ST_MUTED:     drawMuted();     break;
+    case ST_SHARING:   drawSharing();   break;
+    default:           drawOff();       break;
+  }
+}
+
+// ---------------------------------------------------------------- touch (CST816S)
+bool touchTapped() {
+  Wire.beginTransmission(CST816S_ADDR);
+  Wire.write(0x02);                                      // finger count reg
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom(CST816S_ADDR, 1) != 1) return false;
+  return Wire.read() > 0;
+}
+
+// ---------------------------------------------------------------- serial
+void handleLine(const String &line) {
+  if (!line.startsWith("STATE:")) return;
+  lastSerial = millis();
+  String s = line.substring(6); s.trim();
+  if      (s == "available") setState(ST_AVAILABLE);
+  else if (s == "meeting")   setState(ST_MEETING);
+  else if (s == "muted")     setState(ST_MUTED);
+  else if (s == "sharing")   setState(ST_SHARING);
+  else                       setState(ST_OFF);
+}
+
+// ---------------------------------------------------------------- setup/loop
+void setup() {
+  Serial.begin(115200);
+  ledcAttach(LCD_BL, 5000, 8);
+  pinMode(TP_RST, OUTPUT);
+  digitalWrite(TP_RST, LOW);  delay(10);
+  digitalWrite(TP_RST, HIGH); delay(50);
+  Wire.begin(TP_SDA, TP_SCL, 400000);
+  gfx->begin();
+  drawOff();
+  lastSerial = 0;
+}
+
+void loop() {
+  // serial in
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n') { handleLine(lineBuf); lineBuf = ""; }
+    else if (c != '\r') lineBuf += c;
+  }
+
+  // 5s stale watchdog
+  if (state != ST_OFF && millis() - lastSerial > 5000) setState(ST_OFF);
+
+  // touch -> toggle-mute (meeting/muted only), 300ms debounce,
+  // 500ms lockout after any state change (mute race guard)
+  if ((state == ST_MEETING || state == ST_MUTED) &&
+      millis() - lastTouch > 300 &&
+      millis() - lastStateChg > 500 &&
+      touchTapped()) {
+    lastTouch = millis();
+    Serial.print("CMD:toggle-mute\n");
+  }
+
+  // presenting ring pulse: 8-step LUT, 1.5s period, ring redraw only
+  if (state == ST_SHARING) {
+    static int lastStep = -1;
+    int step = (millis() % 1500) / 187;                  // 1500/8
+    if (step != lastStep) { lastStep = step; ringSolid(112, 8, PULSE_LUT[step]); }
+  }
+
+  delay(10);
+}
