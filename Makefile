@@ -52,7 +52,7 @@ app: $(ESPTOOL)
 # macOS installer (unsigned: first launch needs right-click > Open)
 pkg: app
 	pkgbuild --component $(DIST)/$(APP).app --install-location /Applications \
-		--identifier $(ID) --version $(VERSION) $(DIST)/$(APP).pkg
+		--identifier $(ID) --version $(VERSION) $(DIST)/$(APP)-macos11-arm64.pkg
 
 # headless agent for Windows
 windows:

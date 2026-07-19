@@ -21,8 +21,9 @@ No soldering, no wiring — flash it over the same USB cable.
 
 ## Install (macOS)
 
-1. Download **onIT.pkg** from the [latest release](../../releases) and run it
-   (installs `onIT.app` to /Applications).
+1. Download **onIT-macos11-arm64.pkg** from the [latest release](../../releases)
+   and run it (installs `onIT.app` to /Applications; needs an Apple-silicon
+   Mac on macOS 11+).
 2. First launch: right-click `onIT.app` → **Open** (the package is unsigned).
    The app adds itself to login items automatically; the checkbox in the
    window turns that off.
