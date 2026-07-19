@@ -41,6 +41,7 @@ func (a *Agent) FlashFirmware(esptool string, image []byte) error {
 	out, err := exec.Command(esptool,
 		"--chip", "esp32s3", "--port", port, "--baud", "460800",
 		"write-flash", "0x0", tmp.Name()).CombinedOutput()
+	log.Printf("esptool output:\n%s", out)
 	if err != nil {
 		tail := string(out)
 		if len(tail) > 400 {

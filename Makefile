@@ -1,6 +1,6 @@
 APP     := onIT
 ID      := casa.baillargeon.onit
-VERSION := 1.2.1
+VERSION := 1.2.2
 DIST    := dist
 FYNE    := go run fyne.io/tools/cmd/fyne@v1.7.2
 GOFLAGS := -trimpath -ldflags "-s -w"
@@ -14,9 +14,10 @@ MINGW   := x86_64-w64-mingw32-gcc
 
 .PHONY: build test app pkg windows windows-gui firmware clean
 
-build:
+build: $(ESPTOOL)
 	go build $(GOFLAGS) -o $(DIST)/onitctl ./cmd/onitctl
 	go build $(GOFLAGS) -o $(DIST)/onIT ./cmd/onit
+	cp -X $(ESPTOOL) $(DIST)/esptool  # so dev builds can flash too
 
 test:
 	go vet ./...

@@ -1,8 +1,9 @@
-// onIT — menu bar app for the Teams busylight.
+// onIT - menu bar app for the Teams busylight.
 package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -27,6 +28,7 @@ func title(s string) string {
 func main() {
 	hidden := flag.Bool("hidden", false, "start without showing the window (login item)")
 	flag.Parse()
+	setupLogging()
 
 	a := app.NewWithID("casa.baillargeon.onit")
 	agent := busylight.NewAgent()
@@ -35,8 +37,8 @@ func main() {
 	w.SetFixedSize(true)
 	w.SetCloseIntercept(w.Hide)
 
-	teamsLbl := widget.NewLabel("Presence: …")
-	lightLbl := widget.NewLabel("Light: …")
+	teamsLbl := widget.NewLabel("Presence: ...")
+	lightLbl := widget.NewLabel("Light: ...")
 	modeLbl := widget.NewLabel("Mode: " + autoLabel)
 
 	// one choice list drives both the window buttons and the tray menu
@@ -55,16 +57,16 @@ func main() {
 		menuItems = append(menuItems, fyne.NewMenuItem(c.label, func() { agent.SetOverride(c.state) }))
 	}
 
-	fwLbl := widget.NewLabel("Firmware: …")
+	fwLbl := widget.NewLabel("Firmware: ...")
 	updateBtn := widget.NewButton("Update firmware", nil)
 	updateBtn.Hide()
 
 	var update func()
-	graphSetupBtn := widget.NewButton("Presence setup…", func() {
+	graphSetupBtn := widget.NewButton("Presence setup...", func() {
 		showGraphSetup(a, agent, func() { fyne.Do(update) })
 	})
 
-	uninstallBtn := widget.NewButton("Uninstall onIT…", nil)
+	uninstallBtn := widget.NewButton("Uninstall onIT...", nil)
 	uninstallBtn.Importance = widget.DangerImportance
 
 	loginCheck := widget.NewCheck("Start at login", nil)
@@ -112,10 +114,10 @@ func main() {
 				fwLbl.SetText("Firmware: " + st.DeviceFW + " (up to date)")
 				updateBtn.Hide()
 			case st.DeviceFW == "":
-				fwLbl.SetText("Firmware: unknown → " + firmware.Version)
+				fwLbl.SetText("Firmware: unknown -> " + firmware.Version)
 				updateBtn.Show()
 			default:
-				fwLbl.SetText("Firmware: " + st.DeviceFW + " → " + firmware.Version)
+				fwLbl.SetText("Firmware: " + st.DeviceFW + " -> " + firmware.Version)
 				updateBtn.Show()
 			}
 		}
@@ -132,7 +134,7 @@ func main() {
 		for _, b := range btns {
 			b.Disable()
 		}
-		fwLbl.SetText("Flashing " + firmware.Version + " — do not unplug…")
+		fwLbl.SetText("Flashing " + firmware.Version + " - do not unplug...")
 		go func() {
 			err := agent.FlashFirmware(esptoolPath(), firmware.Bin)
 			fyne.Do(func() {
@@ -143,10 +145,10 @@ func main() {
 				}
 				if err != nil {
 					log.Printf("flash failed: %v", err)
-					fwLbl.SetText("Flash failed — see logs; device is still flashable")
+					dialog.ShowError(fmt.Errorf("firmware update failed:\n\n%v\n\nFull log: %s", err, logPath()), w)
 					return
 				}
-				fwLbl.SetText("Flashed — waiting for device…")
+				fwLbl.SetText("Flashed - waiting for device...")
 			})
 		}()
 	}

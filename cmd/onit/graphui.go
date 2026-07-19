@@ -16,42 +16,42 @@ import (
 const registrationHelp = `## Connect onIT to Microsoft Graph
 
 onIT reads your Teams presence from Microsoft Graph. That needs a free,
-one-time "app registration" in your Microsoft account — about 3 minutes.
+one-time "app registration" in your Microsoft account - about 3 minutes.
 
-### 1 · Register the app
+### 1. Register the app
 
 Click **Open Azure Portal** below (sign in with your **work account**), then:
 
-- Search for **App registrations** → **New registration**
+- Search for **App registrations** -> **New registration**
 - **Name:** onIT
 - **Supported account types:** *Accounts in this organizational directory only*
-- Leave Redirect URI empty → **Register**
+- Leave Redirect URI empty -> **Register**
 
-### 2 · Copy the Client ID
+### 2. Copy the Client ID
 
 On the app's **Overview** page, copy **Application (client) ID**
 and paste it into the Client ID field in onIT.
 (Tenant can stay empty unless your admin tells you otherwise.)
 
-### 3 · Allow device sign-in
+### 3. Allow device sign-in
 
-**Authentication** → scroll to **Advanced settings** →
-set **Allow public client flows** to **Yes** → **Save**.
+**Authentication** -> scroll to **Advanced settings** ->
+set **Allow public client flows** to **Yes** -> **Save**.
 *(Without this, sign-in fails with an error about public clients.)*
 
-### 4 · Grant the permission
+### 4. Grant the permission
 
-**API permissions** → **Add a permission** → **Microsoft Graph** →
-**Delegated permissions** → search **Presence** → tick **Presence.Read** →
+**API permissions** -> **Add a permission** -> **Microsoft Graph** ->
+**Delegated permissions** -> search **Presence** -> tick **Presence.Read** ->
 **Add permissions**.
 
 If the status column says *Not granted*, click
 **Grant admin consent** (or ask your admin to).
 
-### 5 · Sign in
+### 5. Sign in
 
-Back in onIT: **Sign in** → a code appears → enter it at
-microsoft.com/devicelogin → approve. Done — the light now follows
+Back in onIT: **Sign in** -> a code appears -> enter it at
+microsoft.com/devicelogin -> approve. Done - the light now follows
 your presence anywhere Teams runs, even on your phone.`
 
 func showGraphSetup(a fyne.App, agent *busylight.Agent, refresh func()) {
@@ -67,14 +67,14 @@ func showGraphSetup(a fyne.App, agent *busylight.Agent, refresh func()) {
 	status := widget.NewLabel("")
 	setStatus := func() {
 		if agent.Graph.SignedIn() {
-			status.SetText("Status: signed in — presence comes from Microsoft Graph")
+			status.SetText("Status: signed in - presence comes from Microsoft Graph")
 		} else {
-			status.SetText("Status: not signed in — using the legacy Teams local API")
+			status.SetText("Status: not signed in - using the legacy Teams local API")
 		}
 	}
 	setStatus()
 
-	helpBtn := widget.NewButton("Setup guide (register the Azure app)…", func() {
+	helpBtn := widget.NewButton("Setup guide (register the Azure app)...", func() {
 		md := widget.NewRichTextFromMarkdown(registrationHelp)
 		md.Wrapping = fyne.TextWrapWord
 		scroll := container.NewScroll(md)
