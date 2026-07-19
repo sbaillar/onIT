@@ -7,7 +7,8 @@
  *
  * Serial in : STATE:available|meeting|sharing|flashing|off   @115200
  *             STATE:custom:<text>       (yellow screen, text auto-fitted)
- *             EMOJI:<base64>            (100x100 RGB565 LE image; shown
+ *             EMOJI:<base64>            (120x120 RGB565 LE image, pixel-
+ *             doubled to fill the screen; shown
  *             immediately and kept alive by STATE:emoji heartbeats)
  *             VERSION                    (query firmware version)
  * Serial out: VERSION:x.y.z     (at boot and on VERSION query)
@@ -19,7 +20,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28 for your revision.
  */
 
-#define FW_VERSION "1.4.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.5.0"   // extracted by `make firmware`, embedded in onIT
 
 #include <Arduino_GFX_Library.h>
 #include <Adafruit_GFX.h>   // only for its Fonts/ include path
@@ -71,7 +72,7 @@ State state = ST_OFF;
 unsigned long lastSerial   = 0;
 unsigned long lastStateChg = 0;
 String customText;
-uint16_t emojiBuf[100 * 100];
+uint16_t emojiBuf[120 * 120];
 bool emojiValid = false;
 String lineBuf;
 
@@ -176,10 +177,23 @@ int b64decode(const String &in, uint8_t *out, int maxOut) {
 }
 
 void drawEmoji() {
-  gfx->fillScreen(C_BG_IDLE);
-  if (emojiValid) gfx->draw16bitRGBBitmap(70, 70, emojiBuf, 100, 100);
-  else textCentered("?", 130, &FreeSansBold18pt7b, C_GRAY_TEXT);
-  backlight(70);
+  if (!emojiValid) {
+    gfx->fillScreen(C_BG_IDLE);
+    textCentered("?", 130, &FreeSansBold18pt7b, C_GRAY_TEXT);
+    backlight(70);
+    return;
+  }
+  static uint16_t row[240];  // 2x pixel-doubled: 120x120 fills 240x240
+  for (int y = 0; y < 120; y++) {
+    for (int x = 0; x < 120; x++) {
+      uint16_t c = emojiBuf[y * 120 + x];
+      row[2 * x] = c;
+      row[2 * x + 1] = c;
+    }
+    gfx->draw16bitRGBBitmap(0, 2 * y, row, 240, 1);
+    gfx->draw16bitRGBBitmap(0, 2 * y + 1, row, 240, 1);
+  }
+  backlight(80);
 }
 
 uint16_t textW(const char *s, const GFXfont *f) {

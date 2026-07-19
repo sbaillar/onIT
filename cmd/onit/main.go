@@ -18,6 +18,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"onit/internal/busylight"
+	"onit/internal/emoji"
 	"onit/internal/firmware"
 )
 
@@ -65,7 +66,10 @@ func main() {
 		container.NewStack(face, container.NewCenter(faceName)))
 	capLbl := widget.NewLabel("starting...")
 	capLbl.Importance = widget.LowImportance
-	header := container.NewVBox(container.NewCenter(deviceFace), container.NewCenter(capLbl))
+	busyBar := widget.NewProgressBarInfinite()
+	busyBar.Stop()
+	busyBar.Hide()
+	header := container.NewVBox(container.NewCenter(deviceFace), container.NewCenter(capLbl), busyBar)
 
 	// one choice list drives both the window buttons and the tray menu
 	type choice struct{ label, state string }
@@ -88,6 +92,8 @@ func main() {
 		}
 	}
 
+	var setBusy func(bool)
+
 	customEntry := widget.NewEntry()
 	customEntry.SetPlaceHolder("Custom message...")
 	showCustom := func(msg string) {
@@ -98,7 +104,9 @@ func main() {
 	}
 	customEntry.OnSubmitted = showCustom
 	customBtn := widget.NewButtonWithIcon("", dotResource("custom"), func() { showCustom(customEntry.Text) })
-	emojiBtn := widget.NewButtonWithIcon("", dotResource("emoji"), func() { showEmojiPicker(a, agent) })
+	emojiBtn := widget.NewButtonWithIcon("",
+		fyne.NewStaticResource("smile.png", emoji.PNG("smile")),
+		func() { showEmojiPicker(a, agent, setBusy) })
 	customRow := container.NewBorder(nil, nil, nil, container.NewHBox(customBtn, emojiBtn), customEntry)
 
 	fwLbl := widget.NewLabel("Firmware: ...")
@@ -136,6 +144,29 @@ func main() {
 	if isDesk {
 		desk.SetSystemTrayMenu(trayMenu) // Fyne appends Quit
 		desk.SetSystemTrayIcon(dotResource("off"))
+	}
+
+	setBusy = func(on bool) {
+		widgets := []fyne.Disableable{customEntry, customBtn, emojiBtn, fwBtn}
+		if on {
+			busyBar.Show()
+			busyBar.Start()
+			for _, b := range btns {
+				b.Disable()
+			}
+			for _, x := range widgets {
+				x.Disable()
+			}
+		} else {
+			busyBar.Stop()
+			busyBar.Hide()
+			for _, b := range btns {
+				b.Enable()
+			}
+			for _, x := range widgets {
+				x.Enable()
+			}
+		}
 	}
 
 	lastShown := ""
@@ -196,7 +227,9 @@ func main() {
 			case st.DeviceFW == firmware.Version:
 				fwLbl.SetText("Firmware " + st.DeviceFW + " - up to date")
 				fwBtn.SetText("Reflash firmware")
+				fwBtn.Importance = widget.LowImportance // usable, not inviting
 				fwBtn.Enable()
+				fwBtn.Refresh()
 			default:
 				from := st.DeviceFW
 				if from == "" {
@@ -204,7 +237,9 @@ func main() {
 				}
 				fwLbl.SetText("Firmware " + from + " -> " + firmware.Version)
 				fwBtn.SetText("Update firmware")
+				fwBtn.Importance = widget.HighImportance
 				fwBtn.Enable()
+				fwBtn.Refresh()
 			}
 		}
 
@@ -217,19 +252,13 @@ func main() {
 
 	fwBtn.OnTapped = func() {
 		flashing = true
-		fwBtn.Disable()
-		for _, b := range btns {
-			b.Disable()
-		}
+		setBusy(true)
 		fwLbl.SetText("Flashing " + firmware.Version + " - do not unplug...")
 		go func() {
 			err := agent.FlashFirmware(esptoolPath(), firmware.Bin)
 			fyne.Do(func() {
 				flashing = false
-				fwBtn.Enable()
-				for _, b := range btns {
-					b.Enable()
-				}
+				setBusy(false)
 				if err != nil {
 					log.Printf("flash failed: %v", err)
 					dialog.ShowError(fmt.Errorf("firmware update failed:\n\n%v\n\nFull log: %s", err, logPath()), w)
@@ -244,6 +273,14 @@ func main() {
 	for _, b := range btns[1:] { // 4 states, 2x2
 		grid.Add(b)
 	}
+	settings := widget.NewAccordion(widget.NewAccordionItem("Settings",
+		container.NewVBox(
+			fwLbl, fwBtn,
+			graphSetupBtn,
+			loginCheck,
+			uninstallBtn,
+		),
+	))
 	w.SetContent(container.NewVBox(
 		header,
 		widget.NewSeparator(),
@@ -251,11 +288,7 @@ func main() {
 		grid,
 		customRow,
 		widget.NewSeparator(),
-		fwLbl, fwBtn,
-		widget.NewSeparator(),
-		graphSetupBtn,
-		loginCheck,
-		uninstallBtn,
+		settings,
 	))
 
 	uninstallBtn.OnTapped = func() {

@@ -24,7 +24,7 @@ var Names = []string{
 }
 
 // Size is the square pixel size of every embedded emoji.
-const Size = 100
+const Size = 120
 
 // PNG returns the embedded image (for UI buttons), nil if unknown.
 func PNG(name string) []byte {
