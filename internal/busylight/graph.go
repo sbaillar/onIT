@@ -277,9 +277,8 @@ func mapPresence(availability, activity string) string {
 	switch availability {
 	case "DoNotDisturb":
 		return "sharing" // device screen reads "Do not disturb"
-	case "Busy", "BusyIdle":
-		return "meeting"
-	case "Available", "AvailableIdle", "Away", "BeRightBack":
+	case "Available", "AvailableIdle", "Away", "BeRightBack",
+		"Busy", "BusyIdle": // calendar-busy without a call stays green
 		return "available"
 	}
 	return "off" // Offline, PresenceUnknown
