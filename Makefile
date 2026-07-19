@@ -1,16 +1,18 @@
 APP     := onIT
 ID      := casa.baillargeon.onit
-VERSION := 1.0.0
+VERSION := 1.1.0
 DIST    := dist
 FYNE    := go run fyne.io/tools/cmd/fyne@v1.7.2
 GOFLAGS := -trimpath -ldflags "-s -w"
 
 ESPTOOL_VERSION := v5.3.1
 ESPTOOL := build/tools/esptool
+ESPTOOL_WIN := build/tools/esptool.exe
 FQBN    := esp32:esp32:esp32s3
 SKETCH  := firmware/busylight_round
+MINGW   := x86_64-w64-mingw32-gcc
 
-.PHONY: build test app pkg windows firmware clean
+.PHONY: build test app pkg windows windows-gui firmware clean
 
 build:
 	go build $(GOFLAGS) -o $(DIST)/teams-busylight ./cmd/teams-busylight
@@ -52,9 +54,24 @@ pkg: app
 	pkgbuild --component $(DIST)/$(APP).app --install-location /Applications \
 		--identifier $(ID) --version $(VERSION) $(DIST)/$(APP).pkg
 
-# headless agent for Windows (GUI needs fyne-cross or a Windows box)
+# headless agent for Windows
 windows:
 	GOOS=windows GOARCH=amd64 go build $(GOFLAGS) -o $(DIST)/teams-busylight.exe ./cmd/teams-busylight
+
+$(ESPTOOL_WIN):
+	mkdir -p build/tools
+	curl -sL -o build/tools/esptool-win.zip \
+		https://github.com/espressif/esptool/releases/download/$(ESPTOOL_VERSION)/esptool-$(ESPTOOL_VERSION)-windows-amd64.zip
+	unzip -o -q build/tools/esptool-win.zip -d build/tools/esptool-win
+	find build/tools/esptool-win -name esptool.exe -exec cp {} $(ESPTOOL_WIN) \;
+
+# Windows tray app (CGO via mingw-w64; -H=windowsgui hides the console)
+windows-gui: $(ESPTOOL_WIN)
+	CGO_ENABLED=1 CC=$(MINGW) GOOS=windows GOARCH=amd64 \
+		go build -trimpath -ldflags "-s -w -H=windowsgui" -o $(DIST)/onIT.exe ./cmd/onit
+	cd $(DIST) && rm -f onIT-windows-amd64.zip && \
+		cp ../$(ESPTOOL_WIN) esptool.exe && \
+		zip -q onIT-windows-amd64.zip onIT.exe esptool.exe && rm esptool.exe
 
 clean:
 	rm -rf $(DIST)

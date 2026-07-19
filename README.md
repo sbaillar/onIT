@@ -53,11 +53,17 @@ returns to Auto on restart.
 
 ## Windows
 
-The GUI is macOS-only for now, but the headless agent is fully
-cross-platform: `make windows` builds `teams-busylight.exe`, which does the
-Teams↔device sync with no UI (run it at startup via Task Scheduler). The
-`.exe` is attached to releases. Flash firmware with
-[esptool](https://github.com/espressif/esptool):
+Download **onIT-windows-amd64.zip** from the [latest release](../../releases),
+extract both files anywhere (keep `esptool.exe` next to `onIT.exe`), and run
+`onIT.exe`. It lives in the system tray (notification area, bottom right)
+with the same state menu, control window, and in-app firmware updates as the
+Mac version, and registers itself to start at login on first run (the
+checkbox turns that off). The binary is unsigned, so SmartScreen warns once —
+**More info → Run anyway**. The device shows up as a COM port automatically
+on Windows 10+.
+
+For no-UI setups, `teams-busylight-windows-amd64.exe` is the headless agent
+(run it via Task Scheduler); flash firmware manually with
 `esptool --chip esp32s3 --port COMx --baud 460800 write-flash 0x0 firmware.bin`.
 
 ## Building from source

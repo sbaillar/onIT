@@ -156,9 +156,8 @@ func main() {
 	w.Resize(fyne.NewSize(250, 0)) // height from content; keep it compact
 
 	// first launch from the installed location: enable the login item
-	// (skipped for dev builds so a temp path never lands in the plist)
 	exe, _ := os.Executable()
-	if !a.Preferences().Bool("autostartConfigured") && strings.HasPrefix(exe, "/Applications/") {
+	if !a.Preferences().Bool("autostartConfigured") && autostartAutoEnable(exe) {
 		if err := setAutostart(true); err != nil {
 			log.Printf("autostart install failed: %v", err)
 		} else {

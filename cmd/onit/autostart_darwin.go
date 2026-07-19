@@ -26,6 +26,13 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 `
 
+// autostartAutoEnable reports whether first launch should enable the login
+// item: only when running from the installed location, so a dev build's
+// temp path never lands in the plist.
+func autostartAutoEnable(exe string) bool {
+	return strings.HasPrefix(exe, "/Applications/")
+}
+
 func plistPath() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, "Library", "LaunchAgents", launchAgentLabel+".plist")
