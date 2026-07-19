@@ -58,7 +58,7 @@ pkg: app build
 	cp -X $(DIST)/onitctl build/pkgroot/usr/local/bin/
 	xattr -rc build/pkgroot
 	COPYFILE_DISABLE=1 pkgbuild --root build/pkgroot --install-location / \
-		--identifier $(ID) --version $(VERSION) $(DIST)/$(APP)-macos-arm64.pkg
+		--identifier $(ID) --version $(VERSION) $(DIST)/$(APP)-$(VERSION)-macos-arm64.pkg
 
 # headless agent for Windows
 windows:
@@ -76,9 +76,9 @@ $(ESPTOOL_WIN):
 windows-gui: $(ESPTOOL_WIN) windows
 	CGO_ENABLED=1 CC=$(MINGW) GOOS=windows GOARCH=amd64 \
 		go build -trimpath -ldflags "-s -w -H=windowsgui" -o $(DIST)/onIT.exe ./cmd/onit
-	cd $(DIST) && rm -f onIT-windows-amd64.zip && \
+	cd $(DIST) && rm -f onIT-$(VERSION)-windows-amd64.zip && \
 		cp ../$(ESPTOOL_WIN) esptool.exe && \
-		zip -q onIT-windows-amd64.zip onIT.exe esptool.exe onitctl.exe && \
+		zip -q onIT-$(VERSION)-windows-amd64.zip onIT.exe esptool.exe onitctl.exe && \
 		rm esptool.exe
 
 clean:

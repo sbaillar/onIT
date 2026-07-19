@@ -20,7 +20,7 @@ No soldering, no wiring — flash it over the same USB cable.
 
 ## Install (macOS)
 
-1. Download **onIT-macos-arm64.pkg** from the [latest release](../../releases)
+1. Download the latest **onIT-<version>-macos-arm64.pkg** from the [latest release](../../releases)
    and run it (needs an Apple-silicon Mac on macOS 11+). It installs
    `onIT.app` to /Applications and the headless `onitctl` CLI to
    /usr/local/bin.
@@ -56,7 +56,7 @@ returns to Auto on restart.
 
 ## Windows
 
-Download **onIT-windows-amd64.zip** from the [latest release](../../releases),
+Download the latest **onIT-<version>-windows-amd64.zip** from the [latest release](../../releases),
 extract it anywhere (keep the files together), and run
 `onIT.exe`. It lives in the system tray (notification area, bottom right)
 with the same state menu, control window, and in-app firmware updates as the
@@ -82,7 +82,7 @@ arduino-cli lib install "GFX Library for Arduino" "Adafruit GFX Library"
 make test       # go vet + unit tests
 make build      # dist/onIT (GUI) + dist/onitctl (headless CLI)
 make firmware   # compile sketch, refresh the image embedded in the app
-make pkg        # dist/onIT-macos-arm64.pkg (app + onitctl + esptool)
+make pkg        # dist/onIT-<version>-macos-arm64.pkg (app + onitctl + esptool)
 make windows    # dist/onitctl.exe
 ```
 
