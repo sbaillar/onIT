@@ -9,9 +9,8 @@ func TestMapState(t *testing.T) {
 	}{
 		{meetingState{}, "available"},
 		{meetingState{IsInMeeting: true}, "meeting"},
-		{meetingState{IsInMeeting: true, IsMuted: true}, "muted"},
+		{meetingState{IsInMeeting: true, IsMuted: true}, "meeting"}, // mute not surfaced
 		{meetingState{IsInMeeting: true, IsSharing: true}, "sharing"},
-		{meetingState{IsInMeeting: true, IsMuted: true, IsSharing: true}, "sharing"},
 		{meetingState{IsInMeeting: true, IsRecordingOn: true}, "sharing"},
 		{meetingState{IsMuted: true}, "available"}, // not in meeting wins
 	}

@@ -5,10 +5,9 @@
  * Library: "GFX Library for Arduino" (moononournation Arduino_GFX)
  * Board:   ESP32S3 Dev Module (USB CDC not needed - CH343P bridges UART0)
  *
- * Serial in : STATE:available|meeting|muted|sharing|off   @115200
+ * Serial in : STATE:available|meeting|sharing|off   @115200
  *             VERSION                    (query firmware version)
- * Serial out: CMD:toggle-mute   (tap, states meeting/muted only)
- *             VERSION:x.y.z     (at boot and on VERSION query)
+ * Serial out: VERSION:x.y.z     (at boot and on VERSION query)
  * Watchdog  : no serial for 5s -> OFF/STALE
  *
  * NOTE ON PINS: values below match the Waveshare wiki demo for this board.
@@ -16,10 +15,9 @@
  * waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28 for your revision.
  */
 
-#define FW_VERSION "1.0.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.1.0"   // extracted by `make firmware`, embedded in onIT
 
 #include <Arduino_GFX_Library.h>
-#include <Wire.h>
 #include <Adafruit_GFX.h>   // only for its Fonts/ include path
 #include <Fonts/FreeSansBold18pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
@@ -34,11 +32,6 @@
 #define LCD_RST   14
 #define LCD_BL     2
 
-#define TP_SDA     6
-#define TP_SCL     7
-#define TP_INT     5
-#define TP_RST    13
-#define CST816S_ADDR 0x15
 
 // ---------------------------------------------------------------- palette (RGB565 from spec)
 #define C_BG_IDLE     0x1083  // #101018
@@ -62,12 +55,11 @@ const uint16_t PULSE_LUT[8] = {
 Arduino_DataBus *bus = new Arduino_ESP32SPI(LCD_DC, LCD_CS, LCD_SCK, LCD_MOSI, LCD_MISO);
 Arduino_GFX *gfx = new Arduino_GC9A01(bus, LCD_RST, 0 /*rotation*/, true /*IPS*/);
 
-enum State { ST_OFF, ST_AVAILABLE, ST_MEETING, ST_MUTED, ST_SHARING };
+enum State { ST_OFF, ST_AVAILABLE, ST_MEETING, ST_SHARING };
 State state = ST_OFF;
 
 unsigned long lastSerial   = 0;
 unsigned long lastStateChg = 0;
-unsigned long lastTouch    = 0;
 String lineBuf;
 
 // ---------------------------------------------------------------- backlight
@@ -109,13 +101,6 @@ void iconMic(int cx, int cy, uint16_t body, float s = 2.0f) {
   gfx->fillRect(cx - 1, y0 + 17 * s, 3, 4 * s, body);                          // stem
 }
 
-void iconMicSlash(int cx, int cy, uint16_t mic, uint16_t slash, float s = 2.0f) {
-  iconMic(cx, cy, mic, s);
-  int x0 = cx - 12 * s, y0 = cy - 12 * s;
-  for (int off = -2; off <= 2; off++)                                          // ~2.5px stroke
-    gfx->drawLine(x0 + 4 * s + off, y0 + 2 * s, x0 + 20 * s + off, y0 + 22 * s, slash);
-}
-
 void iconShare(int cx, int cy, uint16_t color, float s = 1.9f) {
   int x0 = cx - 12 * s, y0 = cy - 12 * s;
   for (int t = 0; t < 2; t++)                                                  // monitor, 2px stroke
@@ -145,14 +130,6 @@ void drawMeeting() {
   backlight(100);
 }
 
-void drawMuted() {
-  gfx->fillScreen(C_RED_DIM);
-  ringDashed(114, 8, C_RED_MRING, 24, 9.0f);             // 24 x [9 on / 6 off]
-  iconMicSlash(120, 80, C_RED_MRING, C_WHITE);
-  textCentered("Muted", 146, &FreeSansBold18pt7b, C_WHITE);
-  backlight(60);
-}
-
 void drawSharing() {
   gfx->fillScreen(C_PURPLE);
   ringSolid(114, 8, C_WHITE);
@@ -176,19 +153,9 @@ void setState(State s) {
   switch (state) {
     case ST_AVAILABLE: drawAvailable(); break;
     case ST_MEETING:   drawMeeting();   break;
-    case ST_MUTED:     drawMuted();     break;
     case ST_SHARING:   drawSharing();   break;
     default:           drawOff();       break;
   }
-}
-
-// ---------------------------------------------------------------- touch (CST816S)
-bool touchTapped() {
-  Wire.beginTransmission(CST816S_ADDR);
-  Wire.write(0x02);                                      // finger count reg
-  if (Wire.endTransmission(false) != 0) return false;
-  if (Wire.requestFrom(CST816S_ADDR, 1) != 1) return false;
-  return Wire.read() > 0;
 }
 
 // ---------------------------------------------------------------- serial
@@ -199,7 +166,6 @@ void handleLine(const String &line) {
   String s = line.substring(6); s.trim();
   if      (s == "available") setState(ST_AVAILABLE);
   else if (s == "meeting")   setState(ST_MEETING);
-  else if (s == "muted")     setState(ST_MUTED);
   else if (s == "sharing")   setState(ST_SHARING);
   else                       setState(ST_OFF);
 }
@@ -208,10 +174,6 @@ void handleLine(const String &line) {
 void setup() {
   Serial.begin(115200);
   ledcAttach(LCD_BL, 5000, 8);
-  pinMode(TP_RST, OUTPUT);
-  digitalWrite(TP_RST, LOW);  delay(10);
-  digitalWrite(TP_RST, HIGH); delay(50);
-  Wire.begin(TP_SDA, TP_SCL, 400000);
   gfx->begin();
   drawOff();
   lastSerial = 0;
@@ -228,16 +190,6 @@ void loop() {
 
   // 5s stale watchdog
   if (state != ST_OFF && millis() - lastSerial > 5000) setState(ST_OFF);
-
-  // touch -> toggle-mute (meeting/muted only), 300ms debounce,
-  // 500ms lockout after any state change (mute race guard)
-  if ((state == ST_MEETING || state == ST_MUTED) &&
-      millis() - lastTouch > 300 &&
-      millis() - lastStateChg > 500 &&
-      touchTapped()) {
-    lastTouch = millis();
-    Serial.print("CMD:toggle-mute\n");
-  }
 
   // presenting ring pulse: 8-step LUT, 1.5s period, ring redraw only
   if (state == ST_SHARING) {

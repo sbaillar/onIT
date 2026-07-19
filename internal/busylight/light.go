@@ -31,11 +31,10 @@ type Light struct {
 	nextScan  time.Time
 	connected atomic.Bool
 	version   atomic.Value // string: firmware version from VERSION: banner
-	Cmds      chan string  // CMD payloads read from the device
 }
 
 func NewLight() *Light {
-	return &Light{Cmds: make(chan string, 8)}
+	return &Light{}
 }
 
 func findPort() string {
@@ -96,17 +95,11 @@ func (l *Light) ensureLocked() bool {
 	return true
 }
 
-// reader pushes CMD lines from the device onto l.Cmds until the port dies.
+// reader watches device output (VERSION banners) until the port dies.
 func (l *Light) reader(port serial.Port) {
 	sc := bufio.NewScanner(port)
 	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if cmd, ok := strings.CutPrefix(line, "CMD:"); ok {
-			select {
-			case l.Cmds <- cmd:
-			default:
-			}
-		} else if v, ok := strings.CutPrefix(line, "VERSION:"); ok {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(sc.Text()), "VERSION:"); ok {
 			l.version.Store(v)
 		}
 	}

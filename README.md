@@ -1,13 +1,12 @@
 # onIT
 
-A physical Microsoft Teams busylight: a small round touchscreen on your desk
-that shows whether you're available, in a call, muted, or presenting — and a
-menu bar app that keeps it in sync with Teams. Tap the screen during a call to
-toggle mute.
+A physical Microsoft Teams busylight: a small round screen on your desk that
+shows whether you're available, in a call, or presenting — driven by a menu
+bar app that follows your Teams presence.
 
 ```
-Microsoft Teams ──ws://localhost:8124──► onIT app ──USB serial──► round LCD
-        ◄── toggle-mute ─────────────────────────◄── tap
+Microsoft Graph (presence) ──► onIT app ──USB serial──► round LCD
+   or the legacy Teams local API (ws://localhost:8124), if still enabled
 ```
 
 ## Hardware
@@ -28,13 +27,16 @@ No soldering, no wiring — flash it over the same USB cable.
 2. First launch: right-click `onIT.app` → **Open** (the package is unsigned).
    The app adds itself to login items automatically; the checkbox in the
    window turns that off.
-3. In Teams: **Settings → Privacy → Third-party app API → Manage API** and
-   enable the API.
+3. Connect a presence source: open onIT → **Presence setup…** and follow the
+   built-in guide (register a free Azure app, sign in with a one-time code —
+   about 3 minutes). If your Teams still offers the legacy third-party app
+   API (Settings → Privacy), onIT uses that automatically instead until you
+   sign in to Graph.
 4. Plug in the device. If the window shows a firmware update (it will on a
    factory-fresh board), click **Update firmware** — the app flashes the
    bundled firmware over USB in about 30 seconds. Don't unplug during this.
-5. Join a test call once and approve the pairing prompt Teams shows. Done —
-   the light now follows your presence.
+Done — the light now follows your presence, even when you're in a meeting
+from another device.
 
 The onIT dot lives in the menu bar: it mirrors the light's state, the menu
 sets states directly, and "Open onIT" shows the control window (Auto/manual
@@ -47,11 +49,10 @@ returns to Auto on restart.
 
 | State | Trigger (Auto) | Display |
 |---|---|---|
-| available | not in a meeting | dark, green ring + dot |
-| meeting | in a call | solid red, mic icon |
-| muted | in a call, muted | dim red, dashed ring, slashed mic — **tap to unmute** |
-| sharing | presenting or recording | purple, pulsing ring, "Do not disturb" |
-| off | Teams not running / no signal for 5 s | near-black dotted ring |
+| available | free, away, or be-right-back | dark, green ring + dot |
+| meeting | in a call/meeting, or busy | solid red, mic icon |
+| sharing | presenting or do-not-disturb | purple, pulsing ring, "Do not disturb" |
+| off | offline / no presence source for 5 s | near-black dotted ring |
 
 ## Windows
 
@@ -101,7 +102,6 @@ make windows    # dist/onitctl.exe
 
 | Direction | Line | Meaning |
 |---|---|---|
-| host → device | `STATE:available\|meeting\|muted\|sharing\|off` | show a state (host repeats every 2 s; device blanks after 5 s of silence) |
+| host → device | `STATE:available\|meeting\|sharing\|off` | show a state (host repeats every 2 s; device blanks after 5 s of silence) |
 | host → device | `VERSION` | ask for firmware version |
 | device → host | `VERSION:x.y.z` | at boot and on query |
-| device → host | `CMD:toggle-mute` | screen tapped during meeting/muted |

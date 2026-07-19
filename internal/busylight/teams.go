@@ -19,10 +19,6 @@ const (
 	maxWSMessage = 1 << 20
 	pingEvery    = 30 * time.Second
 	readTimeout  = 75 * time.Second // > pingEvery; catches half-open sockets
-
-	// The only device command forwarded to Teams; anything else from the
-	// serial port (buggy or foreign firmware) is dropped.
-	allowedCmd = "toggle-mute"
 )
 
 func identityParams() url.Values {
@@ -48,9 +44,14 @@ func loadToken() string {
 	return strings.TrimSpace(string(b))
 }
 
-// RemoveToken deletes the stored Teams pairing token (uninstall cleanup).
+// RemoveToken deletes stored credentials — the Teams pairing token and the
+// Microsoft Graph refresh token (uninstall cleanup).
 func RemoveToken() error {
+	gerr := os.Remove(graphTokenFile())
 	err := os.Remove(tokenFile())
+	if err == nil && gerr != nil && !os.IsNotExist(gerr) {
+		err = gerr
+	}
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -85,15 +86,13 @@ func mapState(ms *meetingState) string {
 		return "available"
 	case ms.IsSharing || ms.IsRecordingOn:
 		return "sharing"
-	case ms.IsMuted:
-		return "muted"
 	default:
 		return "meeting"
 	}
 }
 
-// session runs one WebSocket connection until it fails, feeding a.setTeams
-// and forwarding device taps up to Teams.
+// session runs one legacy Teams local-WebSocket connection until it fails,
+// feeding a.setTeams.
 func (a *Agent) session() error {
 	params := identityParams()
 	token := loadToken()
@@ -107,16 +106,6 @@ func (a *Agent) session() error {
 	}
 	defer ws.Close()
 	log.Print("Connected to Teams local API")
-
-	// drop taps that queued up while Teams was unreachable
-drain:
-	for {
-		select {
-		case <-a.light.Cmds:
-		default:
-			break drain
-		}
-	}
 	a.setTeams(true, mapState(&meetingState{}))
 
 	ws.SetReadLimit(maxWSMessage)
@@ -179,15 +168,6 @@ drain:
 			if msg.MeetingUpdate != nil && msg.MeetingUpdate.MeetingState != nil {
 				a.setTeams(true, mapState(msg.MeetingUpdate.MeetingState))
 			}
-		case cmd := <-a.light.Cmds:
-			if cmd != allowedCmd {
-				log.Printf("ignoring device command %q", cmd)
-				continue
-			}
-			if err := send(cmd); err != nil {
-				return err
-			}
-			log.Printf("Sent action: %s (#%d)", cmd, reqID)
 		case <-ping.C:
 			err := ws.WriteControl(websocket.PingMessage, nil,
 				time.Now().Add(5*time.Second))

@@ -35,7 +35,7 @@ func main() {
 	w.SetFixedSize(true)
 	w.SetCloseIntercept(w.Hide)
 
-	teamsLbl := widget.NewLabel("Teams: …")
+	teamsLbl := widget.NewLabel("Presence: …")
 	lightLbl := widget.NewLabel("Light: …")
 	modeLbl := widget.NewLabel("Mode: " + autoLabel)
 
@@ -59,6 +59,11 @@ func main() {
 	updateBtn := widget.NewButton("Update firmware", nil)
 	updateBtn.Hide()
 
+	var update func()
+	graphSetupBtn := widget.NewButton("Presence setup…", func() {
+		showGraphSetup(a, agent, func() { fyne.Do(update) })
+	})
+
 	uninstallBtn := widget.NewButton("Uninstall onIT…", nil)
 	uninstallBtn.Importance = widget.DangerImportance
 
@@ -78,12 +83,15 @@ func main() {
 
 	lastShown := ""
 	flashing := false
-	update := func() {
+	update = func() {
 		st := agent.Status()
-		if st.TeamsConnected {
-			teamsLbl.SetText("Teams: connected")
-		} else {
-			teamsLbl.SetText("Teams: offline")
+		switch {
+		case st.TeamsConnected && st.Source == "graph":
+			teamsLbl.SetText("Presence: Microsoft Graph")
+		case st.TeamsConnected:
+			teamsLbl.SetText("Presence: Teams local API")
+		default:
+			teamsLbl.SetText("Presence: offline")
 		}
 		if st.LightConnected {
 			lightLbl.SetText("Light: connected")
@@ -156,6 +164,7 @@ func main() {
 		widget.NewSeparator(),
 		fwLbl, updateBtn,
 		loginCheck,
+		graphSetupBtn,
 		uninstallBtn,
 	))
 

@@ -8,8 +8,8 @@ Usage:
   ./test_states.py cycle      # loop through all states until Ctrl-C
 
 Type a state (or its first letter) and hit enter:
-  available | meeting | muted | sharing | off   (a/m/u/s/o)
-Ctrl-C or 'q' to quit. Device CMD lines (e.g. tap -> toggle-mute) are printed.
+  available | meeting | sharing | off   (a/m/s/o)
+Ctrl-C or 'q' to quit. Device output lines (e.g. VERSION:) are printed.
 """
 
 import glob
@@ -22,7 +22,7 @@ import serial
 SERIAL_GLOBS = ["/dev/cu.wchusbserial*", "/dev/cu.usbmodem*", "/dev/cu.usbserial*"]
 BAUD = 115200
 HEARTBEAT = 2.0  # firmware watchdog is 5s
-STATES = ["available", "meeting", "muted", "sharing", "off"]
+STATES = ["available", "meeting", "sharing", "off"]
 
 state = "off"
 running = True
