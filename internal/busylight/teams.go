@@ -48,6 +48,15 @@ func loadToken() string {
 	return strings.TrimSpace(string(b))
 }
 
+// RemoveToken deletes the stored Teams pairing token (uninstall cleanup).
+func RemoveToken() error {
+	err := os.Remove(tokenFile())
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
 func saveToken(tok string) {
 	if err := os.WriteFile(tokenFile(), []byte(tok), 0o600); err != nil {
 		log.Printf("token save failed: %v", err)

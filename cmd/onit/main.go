@@ -10,6 +10,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
 
@@ -57,6 +58,9 @@ func main() {
 	fwLbl := widget.NewLabel("Firmware: …")
 	updateBtn := widget.NewButton("Update firmware", nil)
 	updateBtn.Hide()
+
+	uninstallBtn := widget.NewButton("Uninstall onIT…", nil)
+	uninstallBtn.Importance = widget.DangerImportance
 
 	loginCheck := widget.NewCheck("Start at login", nil)
 	loginCheck.SetChecked(autostartEnabled())
@@ -152,7 +156,34 @@ func main() {
 		widget.NewSeparator(),
 		fwLbl, updateBtn,
 		loginCheck,
+		uninstallBtn,
 	))
+
+	uninstallBtn.OnTapped = func() {
+		dialog.ShowConfirm("Uninstall onIT",
+			"This removes the start-at-login entry, the Teams pairing token,\n"+
+				"all settings, and the app itself. The device is not affected.\n\nContinue?",
+			func(ok bool) {
+				if !ok {
+					return
+				}
+				if err := setAutostart(false); err != nil {
+					log.Printf("uninstall: autostart: %v", err)
+				}
+				if err := busylight.RemoveToken(); err != nil {
+					log.Printf("uninstall: token: %v", err)
+				}
+				for _, d := range prefsDirs() {
+					os.RemoveAll(d)
+				}
+				if err := removeInstalledFiles(); err != nil {
+					log.Printf("uninstall: app files: %v", err)
+				}
+				done := dialog.NewInformation("Uninstalled", uninstallDoneMsg, w)
+				done.SetOnClosed(a.Quit)
+				done.Show()
+			}, w)
+	}
 	w.Resize(fyne.NewSize(250, 0)) // height from content; keep it compact
 
 	// first launch from the installed location: enable the login item
