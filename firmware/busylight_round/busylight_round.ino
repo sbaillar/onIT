@@ -5,17 +5,18 @@
  * Library: "GFX Library for Arduino" (moononournation Arduino_GFX)
  * Board:   ESP32S3 Dev Module (USB CDC not needed - CH343P bridges UART0)
  *
- * Serial in : STATE:available|meeting|sharing|off   @115200
+ * Serial in : STATE:available|meeting|sharing|flashing|off   @115200
  *             VERSION                    (query firmware version)
  * Serial out: VERSION:x.y.z     (at boot and on VERSION query)
- * Watchdog  : no serial for 5s -> OFF/STALE
+ * Watchdog  : no serial for 5s -> OFF/STALE (except FLASHING: sticky,
+ *             shown until the flash reset - the port is closed during esptool)
  *
  * NOTE ON PINS: values below match the Waveshare wiki demo for this board.
  * If the panel stays black, verify LCD_RST/TP pins against
  * waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28 for your revision.
  */
 
-#define FW_VERSION "1.1.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.2.0"   // extracted by `make firmware`, embedded in onIT
 
 #include <Arduino_GFX_Library.h>
 #include <Adafruit_GFX.h>   // only for its Fonts/ include path
@@ -51,11 +52,16 @@ const uint16_t PULSE_LUT[8] = {
   0xFFFF, 0xE73C, 0xB5FA, 0x8C58, 0x7BD7, 0x8C58, 0xB5FA, 0xE73C
 };
 
+// Flashing pulse: ring #E05070 -> #400818 -> back (urgent red breathe)
+const uint16_t FLASH_LUT[8] = {
+  0xE28E, 0xBA4B, 0x9208, 0x4043, 0x4043, 0x9208, 0xBA4B, 0xE28E
+};
+
 // ---------------------------------------------------------------- display
 Arduino_DataBus *bus = new Arduino_ESP32SPI(LCD_DC, LCD_CS, LCD_SCK, LCD_MOSI, LCD_MISO);
 Arduino_GFX *gfx = new Arduino_GC9A01(bus, LCD_RST, 0 /*rotation*/, true /*IPS*/);
 
-enum State { ST_OFF, ST_AVAILABLE, ST_MEETING, ST_SHARING };
+enum State { ST_OFF, ST_AVAILABLE, ST_MEETING, ST_SHARING, ST_FLASHING };
 State state = ST_OFF;
 
 unsigned long lastSerial   = 0;
@@ -139,6 +145,14 @@ void drawSharing() {
   backlight(100);
 }
 
+void drawFlashing() {
+  gfx->fillScreen(C_RED_BUSY);
+  ringSolid(114, 8, C_RED_MRING);
+  textCentered("Flashing", 112, &FreeSansBold18pt7b, C_WHITE);
+  textCentered("do not power off", 152, &FreeSansBold9pt7b, C_WHITE);
+  backlight(100);
+}
+
 void drawOff() {
   gfx->fillScreen(C_BLACK);
   ringDashed(114, 3, C_GRAY_RING, 48, 3.5f);             // fine dotted ring
@@ -154,6 +168,7 @@ void setState(State s) {
     case ST_AVAILABLE: drawAvailable(); break;
     case ST_MEETING:   drawMeeting();   break;
     case ST_SHARING:   drawSharing();   break;
+    case ST_FLASHING:  drawFlashing();  break;
     default:           drawOff();       break;
   }
 }
@@ -167,6 +182,7 @@ void handleLine(const String &line) {
   if      (s == "available") setState(ST_AVAILABLE);
   else if (s == "meeting")   setState(ST_MEETING);
   else if (s == "sharing")   setState(ST_SHARING);
+  else if (s == "flashing")  setState(ST_FLASHING);
   else                       setState(ST_OFF);
 }
 
@@ -189,13 +205,20 @@ void loop() {
   }
 
   // 5s stale watchdog
-  if (state != ST_OFF && millis() - lastSerial > 5000) setState(ST_OFF);
+  if (state != ST_OFF && state != ST_FLASHING && millis() - lastSerial > 5000) setState(ST_OFF);
 
   // presenting ring pulse: 8-step LUT, 1.5s period, ring redraw only
   if (state == ST_SHARING) {
     static int lastStep = -1;
     int step = (millis() % 1500) / 187;                  // 1500/8
     if (step != lastStep) { lastStep = step; ringSolid(114, 8, PULSE_LUT[step]); }
+  }
+
+  // flashing ring pulse: faster, red, 1s period
+  if (state == ST_FLASHING) {
+    static int lastF = -1;
+    int step = (millis() % 1000) / 125;                  // 1000/8
+    if (step != lastF) { lastF = step; ringSolid(114, 8, FLASH_LUT[step]); }
   }
 
   delay(10);

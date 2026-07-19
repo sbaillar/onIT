@@ -36,6 +36,11 @@ func (a *Agent) FlashFirmware(esptool string, image []byte) error {
 	}
 	tmp.Close()
 
+	// warn on the device itself; fw >= 1.2.0 shows a red pulsing
+	// "Flashing - do not power off" screen (sticky, watchdog-exempt)
+	a.light.Send("flashing")
+	time.Sleep(400 * time.Millisecond) // let it render before we drop the port
+
 	a.light.Close() // release the port for esptool
 	log.Printf("Flashing %d bytes to %s", len(image), port)
 	out, err := exec.Command(esptool,

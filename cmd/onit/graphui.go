@@ -13,78 +13,62 @@ import (
 	"onit/internal/busylight"
 )
 
-const registrationHelp = `## Connect onIT to Microsoft Graph
+const signInHelp = `## Connect onIT to your Teams presence
 
-onIT reads your Teams presence from Microsoft Graph. That needs a free,
-one-time "app registration" in your Microsoft account - about 3 minutes.
+onIT ships with a shared app registration, so for most people this is all:
 
-### 1. Register the app
+1. Click **Sign in to Microsoft**
+2. A code appears - enter it at **microsoft.com/devicelogin**
+3. Approve the request (Presence.Read - onIT can only see your presence)
 
-Click **Open Azure Portal** below (sign in with your **work account**), then:
+If your organization requires admin approval, the sign-in page says so -
+an admin approves once and after that everyone in your org can sign in.
 
-- Search for **App registrations** -> **New registration**
-- **Name:** onIT
-- **Supported account types:** *Accounts in this organizational directory only*
-- Leave Redirect URI empty -> **Register**
+## Advanced: use your own app registration
 
-### 2. Copy the Client ID
+Only needed if your org blocks third-party apps or you want full control.
+In the Azure Portal: **App registrations** -> **New registration**
+(name it, leave Redirect URI empty). Then:
 
-On the app's **Overview** page, copy **Application (client) ID**
-and paste it into the Client ID field in onIT.
-(Tenant can stay empty unless your admin tells you otherwise.)
-
-### 3. Allow device sign-in
-
-**Authentication** -> scroll to **Advanced settings** ->
-set **Allow public client flows** to **Yes** -> **Save**.
-*(Without this, sign-in fails with an error about public clients.)*
-
-### 4. Grant the permission
-
-**API permissions** -> **Add a permission** -> **Microsoft Graph** ->
-**Delegated permissions** -> search **Presence** -> tick **Presence.Read** ->
-**Add permissions**.
-
-If the status column says *Not granted*, click
-**Grant admin consent** (or ask your admin to).
-
-### 5. Sign in
-
-Back in onIT: **Sign in** -> a code appears -> enter it at
-microsoft.com/devicelogin -> approve. Done - the light now follows
-your presence anywhere Teams runs, even on your phone.`
+- **Authentication** -> **Advanced settings** ->
+  **Allow public client flows** = **Yes** -> Save
+- **API permissions** -> **Add a permission** -> **Microsoft Graph** ->
+  **Delegated** -> **Presence.Read** -> Add (grant admin consent if asked)
+- Copy the **Application (client) ID** into the Advanced section below,
+  then Sign in. Set Tenant to your Directory (tenant) ID if sign-in asks
+  for it; otherwise leave it empty.`
 
 func showGraphSetup(a fyne.App, agent *busylight.Agent, refresh func()) {
 	w := a.NewWindow("Presence setup")
 
 	clientID := widget.NewEntry()
-	clientID.SetPlaceHolder("Application (client) ID")
+	clientID.SetPlaceHolder("default: shared onIT registration")
 	clientID.SetText(a.Preferences().String("graphClientID"))
 	tenant := widget.NewEntry()
-	tenant.SetPlaceHolder("Tenant ID (optional)")
+	tenant.SetPlaceHolder("default: organizations")
 	tenant.SetText(a.Preferences().String("graphTenant"))
 
 	status := widget.NewLabel("")
+	status.Wrapping = fyne.TextWrapWord
 	setStatus := func() {
 		if agent.Graph.SignedIn() {
 			status.SetText("Status: signed in - presence comes from Microsoft Graph")
 		} else {
-			status.SetText("Status: not signed in - using the legacy Teams local API")
+			status.SetText("Status: not signed in - using the legacy Teams local API if available")
 		}
 	}
 	setStatus()
 
-	helpBtn := widget.NewButton("Setup guide (register the Azure app)...", func() {
-		md := widget.NewRichTextFromMarkdown(registrationHelp)
+	helpBtn := widget.NewButton("Help...", func() {
+		md := widget.NewRichTextFromMarkdown(signInHelp)
 		md.Wrapping = fyne.TextWrapWord
 		scroll := container.NewScroll(md)
-		scroll.SetMinSize(fyne.NewSize(430, 420))
+		scroll.SetMinSize(fyne.NewSize(430, 400))
 		portal := widget.NewButton("Open Azure Portal", func() {
 			u, _ := url.Parse("https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade")
 			a.OpenURL(u)
 		})
-		portal.Importance = widget.HighImportance
-		d := dialog.NewCustom("How to set up Microsoft Graph", "Close",
+		d := dialog.NewCustom("Connecting to Microsoft Graph", "Close",
 			container.NewBorder(nil, portal, nil, nil, scroll), w)
 		d.Show()
 	})
@@ -93,12 +77,15 @@ func showGraphSetup(a fyne.App, agent *busylight.Agent, refresh func()) {
 	signInBtn = widget.NewButton("Sign in to Microsoft", func() {
 		id := strings.TrimSpace(clientID.Text)
 		if id == "" {
-			dialog.ShowInformation("Client ID needed",
-				"Paste your Azure app's Application (client) ID first.\nThe setup guide shows where to find it.", w)
+			id = busylight.DefaultClientID
+		}
+		if id == "" {
+			dialog.ShowInformation("No app registration",
+				"This build has no shared registration baked in.\nAdd a Client ID under Advanced (see Help).", w)
 			return
 		}
 		ten := strings.TrimSpace(tenant.Text)
-		a.Preferences().SetString("graphClientID", id)
+		a.Preferences().SetString("graphClientID", strings.TrimSpace(clientID.Text))
 		a.Preferences().SetString("graphTenant", ten)
 
 		dc, err := busylight.StartDeviceLogin(id, ten)
@@ -138,6 +125,7 @@ func showGraphSetup(a fyne.App, agent *busylight.Agent, refresh func()) {
 			})
 		}()
 	})
+	signInBtn.Importance = widget.HighImportance
 
 	signOutBtn := widget.NewButton("Sign out", func() {
 		agent.Graph.SignOut()
@@ -145,13 +133,19 @@ func showGraphSetup(a fyne.App, agent *busylight.Agent, refresh func()) {
 		refresh()
 	})
 
+	advanced := widget.NewAccordion(widget.NewAccordionItem(
+		"Advanced: own app registration",
+		container.NewVBox(
+			widget.NewLabel("Client ID"), clientID,
+			widget.NewLabel("Tenant"), tenant,
+		),
+	))
+
 	w.SetContent(container.NewVBox(
 		status,
-		widget.NewSeparator(),
-		widget.NewLabel("Client ID"), clientID,
-		widget.NewLabel("Tenant (optional)"), tenant,
 		signInBtn, signOutBtn,
 		widget.NewSeparator(),
+		advanced,
 		helpBtn,
 	))
 	w.Resize(fyne.NewSize(400, 0))
