@@ -1,4 +1,4 @@
-// Headless Teams busylight agent (CLI). See internal/busylight for the logic.
+// onitctl — headless Teams busylight agent (CLI). See internal/busylight for the logic.
 package main
 
 import (
