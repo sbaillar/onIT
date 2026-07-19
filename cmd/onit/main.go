@@ -4,12 +4,14 @@ package main
 import (
 	"flag"
 	"fmt"
+	"image/color"
 	"log"
 	"os"
 	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
@@ -31,6 +33,12 @@ func main() {
 	setupLogging()
 
 	a := app.NewWithID("casa.baillargeon.onit")
+	if appVersion == "dev" {
+		if v := a.Metadata().Version; v != "" && v != "0.0.1" {
+			appVersion = v // fyne-packaged builds carry the version as metadata
+		}
+	}
+	a.Settings().SetTheme(onitTheme{base: a.Settings().Theme()})
 
 	if old, err := takeoverInstance(pidFilePath(), isOnitProcess); err != nil {
 		log.Printf("single-instance check failed: %v", err)
@@ -46,9 +54,20 @@ func main() {
 	w.SetFixedSize(true)
 	w.SetCloseIntercept(w.Hide)
 
-	teamsLbl := widget.NewLabel("Presence: ...")
-	lightLbl := widget.NewLabel("Light: ...")
-	modeLbl := widget.NewLabel("Mode: " + autoLabel)
+	// header: the window mirrors the device - big state dot + state name
+	headerDot := canvas.NewCircle(stateColors["off"])
+	headerName := canvas.NewText("Off", color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF})
+	headerName.TextSize = 22
+	headerName.TextStyle = fyne.TextStyle{Bold: true}
+	capLbl := widget.NewLabel("starting...")
+	capLbl.Importance = widget.LowImportance
+	header := container.NewVBox(
+		container.NewHBox(
+			container.NewGridWrap(fyne.NewSize(24, 34), layoutCircle(headerDot)),
+			headerName,
+		),
+		capLbl,
+	)
 
 	// one choice list drives both the window buttons and the tray menu
 	type choice struct{ label, state string }
@@ -57,18 +76,23 @@ func main() {
 		choices = append(choices, choice{title(s), s})
 	}
 	btns := make([]*widget.Button, len(choices))
-	menuItems := []*fyne.MenuItem{
-		fyne.NewMenuItem("Open onIT", func() { w.Show(); w.RequestFocus() }),
-		fyne.NewMenuItemSeparator(),
-	}
+	stateItems := make([]*fyne.MenuItem, len(choices))
 	for i, c := range choices {
-		btns[i] = widget.NewButton(c.label, func() { agent.SetOverride(c.state) })
-		menuItems = append(menuItems, fyne.NewMenuItem(c.label, func() { agent.SetOverride(c.state) }))
+		if c.state == "" {
+			btns[i] = widget.NewButton(c.label, func() { agent.SetOverride(c.state) })
+		} else {
+			btns[i] = widget.NewButtonWithIcon(c.label, dotResource(c.state),
+				func() { agent.SetOverride(c.state) })
+		}
+		stateItems[i] = fyne.NewMenuItem(c.label, func() { agent.SetOverride(c.state) })
+		if c.state != "" {
+			stateItems[i].Icon = dotResource(c.state)
+		}
 	}
 
 	fwLbl := widget.NewLabel("Firmware: ...")
-	updateBtn := widget.NewButton("Update firmware", nil)
-	updateBtn.Hide()
+	fwLbl.Importance = widget.LowImportance
+	fwBtn := widget.NewButton("Update firmware", nil)
 
 	var update func()
 	graphSetupBtn := widget.NewButton("Presence setup...", func() {
@@ -86,9 +110,20 @@ func main() {
 		}
 	}
 
+	menuItems := []*fyne.MenuItem{
+		fyne.NewMenuItem("Open onIT", func() { w.Show(); w.RequestFocus() }),
+		fyne.NewMenuItemSeparator(),
+	}
+	menuItems = append(menuItems, stateItems...)
+	menuItems = append(menuItems,
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("Check for updates...", func() { w.Show(); checkForUpdates(w) }),
+		fyne.NewMenuItem("About onIT...", func() { w.Show(); showAbout(w) }),
+	)
+	trayMenu := fyne.NewMenu("onIT", menuItems...)
 	desk, isDesk := a.(desktop.App)
 	if isDesk {
-		desk.SetSystemTrayMenu(fyne.NewMenu("onIT", menuItems...)) // Fyne appends Quit
+		desk.SetSystemTrayMenu(trayMenu) // Fyne appends Quit
 		desk.SetSystemTrayIcon(dotResource("off"))
 	}
 
@@ -96,40 +131,60 @@ func main() {
 	flashing := false
 	update = func() {
 		st := agent.Status()
+
+		headerDot.FillColor = stateColorOr(st.Shown)
+		headerDot.Refresh()
+		headerName.Text = title(st.Shown)
+		headerName.Refresh()
+
+		src := "no presence source"
 		switch {
 		case st.TeamsConnected && st.Source == "graph":
-			teamsLbl.SetText("Presence: Microsoft Graph")
+			src = "Microsoft Graph"
 		case st.TeamsConnected:
-			teamsLbl.SetText("Presence: Teams local API")
-		default:
-			teamsLbl.SetText("Presence: offline")
+			src = "Teams local API"
 		}
-		if st.LightConnected {
-			lightLbl.SetText("Light: connected")
-		} else {
-			lightLbl.SetText("Light: not found")
+		light := "light connected"
+		if !st.LightConnected {
+			light = "light not found"
 		}
-		if st.Override == "" {
-			modeLbl.SetText("Mode: " + autoLabel)
-		} else {
-			modeLbl.SetText("Mode: manual (" + st.Override + ")")
+		capLbl.SetText(src + "  /  " + light)
+
+		for i, c := range choices {
+			want := widget.MediumImportance
+			if st.Override == c.state && (c.state != "" || st.Override == "") {
+				want = widget.HighImportance
+			}
+			if btns[i].Importance != want {
+				btns[i].Importance = want
+				btns[i].Refresh()
+			}
+			if stateItems[i].Checked != (want == widget.HighImportance) {
+				stateItems[i].Checked = want == widget.HighImportance
+			}
 		}
+		trayMenu.Refresh()
+
 		if !flashing {
 			switch {
 			case !st.LightConnected:
-				fwLbl.SetText("Firmware: (no device)")
-				updateBtn.Hide()
+				fwLbl.SetText("Firmware: no device")
+				fwBtn.Disable()
 			case st.DeviceFW == firmware.Version:
-				fwLbl.SetText("Firmware: " + st.DeviceFW + " (up to date)")
-				updateBtn.Hide()
-			case st.DeviceFW == "":
-				fwLbl.SetText("Firmware: unknown -> " + firmware.Version)
-				updateBtn.Show()
+				fwLbl.SetText("Firmware " + st.DeviceFW + " - up to date")
+				fwBtn.SetText("Reflash firmware")
+				fwBtn.Enable()
 			default:
-				fwLbl.SetText("Firmware: " + st.DeviceFW + " -> " + firmware.Version)
-				updateBtn.Show()
+				from := st.DeviceFW
+				if from == "" {
+					from = "unknown"
+				}
+				fwLbl.SetText("Firmware " + from + " -> " + firmware.Version)
+				fwBtn.SetText("Update firmware")
+				fwBtn.Enable()
 			}
 		}
+
 		if isDesk && st.Shown != lastShown {
 			lastShown = st.Shown
 			desk.SetSystemTrayIcon(dotResource(st.Shown))
@@ -137,9 +192,9 @@ func main() {
 	}
 	agent.OnChange(func() { fyne.Do(update) })
 
-	updateBtn.OnTapped = func() {
+	fwBtn.OnTapped = func() {
 		flashing = true
-		updateBtn.Disable()
+		fwBtn.Disable()
 		for _, b := range btns {
 			b.Disable()
 		}
@@ -148,7 +203,7 @@ func main() {
 			err := agent.FlashFirmware(esptoolPath(), firmware.Bin)
 			fyne.Do(func() {
 				flashing = false
-				updateBtn.Enable()
+				fwBtn.Enable()
 				for _, b := range btns {
 					b.Enable()
 				}
@@ -163,25 +218,25 @@ func main() {
 	}
 
 	grid := container.NewGridWithColumns(2)
-	for _, b := range btns[1 : len(btns)-1] { // states except "off"
+	for _, b := range btns[1:] { // 4 states, 2x2
 		grid.Add(b)
 	}
 	w.SetContent(container.NewVBox(
-		teamsLbl, lightLbl, modeLbl,
+		header,
 		widget.NewSeparator(),
 		btns[0], // Auto (Teams)
 		grid,
-		btns[len(btns)-1], // off, full width
 		widget.NewSeparator(),
-		fwLbl, updateBtn,
-		loginCheck,
+		fwLbl, fwBtn,
+		widget.NewSeparator(),
 		graphSetupBtn,
+		loginCheck,
 		uninstallBtn,
 	))
 
 	uninstallBtn.OnTapped = func() {
 		dialog.ShowConfirm("Uninstall onIT",
-			"This removes the start-at-login entry, the Teams pairing token,\n"+
+			"This removes the start-at-login entry, sign-in tokens,\n"+
 				"all settings, and the app itself. The device is not affected.\n\nContinue?",
 			func(ok bool) {
 				if !ok {
@@ -206,7 +261,7 @@ func main() {
 				done.Show()
 			}, w)
 	}
-	w.Resize(fyne.NewSize(250, 0)) // height from content; keep it compact
+	w.Resize(fyne.NewSize(260, 0)) // height from content; keep it compact
 
 	// first launch from the installed location: enable the login item
 	exe, _ := os.Executable()
@@ -226,4 +281,17 @@ func main() {
 	} else {
 		w.ShowAndRun()
 	}
+}
+
+func stateColorOr(state string) color.NRGBA {
+	if c, ok := stateColors[state]; ok {
+		return c
+	}
+	return stateColors["off"]
+}
+
+// layoutCircle keeps a canvas circle round inside a GridWrap cell by
+// padding it vertically to match the header text height.
+func layoutCircle(c *canvas.Circle) fyne.CanvasObject {
+	return container.NewPadded(c)
 }

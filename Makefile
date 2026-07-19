@@ -4,6 +4,7 @@ VERSION := 1.2.3
 DIST    := dist
 FYNE    := go run fyne.io/tools/cmd/fyne@v1.7.2
 GOFLAGS := -trimpath -ldflags "-s -w"
+APPLDFLAGS := -trimpath -ldflags "-s -w -X main.appVersion=$(VERSION)"
 
 ESPTOOL_VERSION := v5.3.1
 ESPTOOL := build/tools/esptool
@@ -16,7 +17,7 @@ MINGW   := x86_64-w64-mingw32-gcc
 
 build: $(ESPTOOL)
 	go build $(GOFLAGS) -o $(DIST)/onitctl ./cmd/onitctl
-	go build $(GOFLAGS) -o $(DIST)/onIT ./cmd/onit
+	go build $(APPLDFLAGS) -o $(DIST)/onIT ./cmd/onit
 	cp -X $(ESPTOOL) $(DIST)/esptool  # so dev builds can flash too
 
 test:
@@ -76,7 +77,7 @@ $(ESPTOOL_WIN):
 # (CGO via mingw-w64; -H=windowsgui hides the console)
 windows-gui: $(ESPTOOL_WIN) windows
 	CGO_ENABLED=1 CC=$(MINGW) GOOS=windows GOARCH=amd64 \
-		go build -trimpath -ldflags "-s -w -H=windowsgui" -o $(DIST)/onIT.exe ./cmd/onit
+		go build -trimpath -ldflags "-s -w -H=windowsgui -X main.appVersion=$(VERSION)" -o $(DIST)/onIT.exe ./cmd/onit
 	cd $(DIST) && rm -f onIT-$(VERSION)-windows-amd64.zip && \
 		cp ../$(ESPTOOL_WIN) esptool.exe && \
 		zip -q onIT-$(VERSION)-windows-amd64.zip onIT.exe esptool.exe onitctl.exe && \
