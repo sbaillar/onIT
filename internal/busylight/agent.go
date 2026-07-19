@@ -3,6 +3,7 @@ package busylight
 import (
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -17,14 +18,16 @@ type Status struct {
 	LightConnected bool
 	Override       string // "" = auto (follow Teams)
 	Shown          string // state currently sent to the device
+	DeviceFW       string // firmware version the device reported; "" = unknown
 }
 
 // Agent drives the light from Teams presence, with an optional manual override.
 // All serial writes happen on a single push goroutine, so a state change can
 // never be overwritten by a concurrent stale heartbeat.
 type Agent struct {
-	light *Light
-	kick  chan struct{} // wakes the push goroutine after a state change
+	light    *Light
+	kick     chan struct{} // wakes the push goroutine after a state change
+	flashing atomic.Bool   // suspends serial pushes while esptool owns the port
 
 	mu         sync.Mutex
 	teamsUp    bool
@@ -66,6 +69,7 @@ func (a *Agent) statusLocked() Status {
 		LightConnected: a.light.Connected(),
 		Override:       a.override,
 		Shown:          a.effectiveLocked(),
+		DeviceFW:       a.light.Version(),
 	}
 }
 
@@ -123,6 +127,9 @@ func (a *Agent) Run() {
 			select {
 			case <-a.kick:
 			case <-tick.C:
+			}
+			if a.flashing.Load() {
+				continue // esptool owns the port; don't reopen it mid-flash
 			}
 			a.mu.Lock()
 			state := a.effectiveLocked()

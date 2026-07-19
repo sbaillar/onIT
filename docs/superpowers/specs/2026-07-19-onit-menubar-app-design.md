@@ -56,3 +56,14 @@ as the two status lines instead of logs.
 - Unit: override-vs-auto resolution, Teams state mapping.
 - E2E: fake Teams WS server drives Auto mode against the real device.
 - Manual: buttons drive the light; install `.pkg`, confirm menu bar + login item.
+
+## Addendum: firmware install/update (approved 2026-07-19)
+
+Bundled-firmware model: `make firmware` compiles the sketch via arduino-cli
+(FQBN esp32:esp32:esp32s3), copies the merged image + FW_VERSION into
+internal/firmware/ (go:embed). Firmware prints `VERSION:x.y.z` at boot and on
+`VERSION` query; the Light asks on every connect. UI shows a firmware row and
+an Update button on version mismatch/unknown; flashing runs Espressif's
+standalone esptool (pinned, bundled in onIT.app/Contents/Resources, PATH
+fallback for dev) against the merged image at 0x0 while the agent releases
+the port. Verified end-to-end on the real device 2026-07-19.

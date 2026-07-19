@@ -27,9 +27,11 @@ var usbIDs = map[[2]string]bool{
 type Light struct {
 	mu        sync.Mutex
 	port      serial.Port
+	portName  string // last successfully opened port; survives Close
 	nextScan  time.Time
 	connected atomic.Bool
-	Cmds      chan string // CMD payloads read from the device
+	version   atomic.Value // string: firmware version from VERSION: banner
+	Cmds      chan string  // CMD payloads read from the device
 }
 
 func NewLight() *Light {
@@ -86,9 +88,11 @@ func (l *Light) ensureLocked() bool {
 	}
 	time.Sleep(500 * time.Millisecond) // board may reset on open
 	l.port = port
+	l.portName = name
 	l.connected.Store(true)
 	log.Printf("Serial connected: %s", name)
 	go l.reader(port)
+	port.Write([]byte("VERSION\n")) // boot banner is easy to miss; just ask
 	return true
 }
 
@@ -96,11 +100,14 @@ func (l *Light) ensureLocked() bool {
 func (l *Light) reader(port serial.Port) {
 	sc := bufio.NewScanner(port)
 	for sc.Scan() {
-		if cmd, ok := strings.CutPrefix(strings.TrimSpace(sc.Text()), "CMD:"); ok {
+		line := strings.TrimSpace(sc.Text())
+		if cmd, ok := strings.CutPrefix(line, "CMD:"); ok {
 			select {
 			case l.Cmds <- cmd:
 			default:
 			}
+		} else if v, ok := strings.CutPrefix(line, "VERSION:"); ok {
+			l.version.Store(v)
 		}
 	}
 	l.drop(port)
@@ -136,4 +143,29 @@ func (l *Light) Send(state string) {
 // safe to call from UI threads while a reconnect is in progress).
 func (l *Light) Connected() bool {
 	return l.connected.Load()
+}
+
+// Version returns the firmware version the device last reported ("" if the
+// firmware predates the VERSION banner).
+func (l *Light) Version() string {
+	v, _ := l.version.Load().(string)
+	return v
+}
+
+// PortName returns the last successfully opened port path, even after Close.
+func (l *Light) PortName() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.portName
+}
+
+// Close releases the serial port (e.g. so esptool can use it).
+func (l *Light) Close() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.port != nil {
+		l.port.Close()
+		l.port = nil
+		l.connected.Store(false)
+	}
 }

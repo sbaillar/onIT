@@ -14,6 +14,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"onit/internal/busylight"
+	"onit/internal/firmware"
 )
 
 const autoLabel = "Auto (Teams)"
@@ -53,6 +54,10 @@ func main() {
 		menuItems = append(menuItems, fyne.NewMenuItem(c.label, func() { agent.SetOverride(c.state) }))
 	}
 
+	fwLbl := widget.NewLabel("Firmware: …")
+	updateBtn := widget.NewButton("Update firmware", nil)
+	updateBtn.Hide()
+
 	loginCheck := widget.NewCheck("Start at login", nil)
 	loginCheck.SetChecked(autostartEnabled())
 	loginCheck.OnChanged = func(on bool) {
@@ -68,6 +73,7 @@ func main() {
 	}
 
 	lastShown := ""
+	flashing := false
 	update := func() {
 		st := agent.Status()
 		if st.TeamsConnected {
@@ -85,12 +91,53 @@ func main() {
 		} else {
 			modeLbl.SetText("Mode: manual (" + st.Override + ")")
 		}
+		if !flashing {
+			switch {
+			case !st.LightConnected:
+				fwLbl.SetText("Firmware: (no device)")
+				updateBtn.Hide()
+			case st.DeviceFW == firmware.Version:
+				fwLbl.SetText("Firmware: " + st.DeviceFW + " (up to date)")
+				updateBtn.Hide()
+			case st.DeviceFW == "":
+				fwLbl.SetText("Firmware: unknown → " + firmware.Version)
+				updateBtn.Show()
+			default:
+				fwLbl.SetText("Firmware: " + st.DeviceFW + " → " + firmware.Version)
+				updateBtn.Show()
+			}
+		}
 		if isDesk && st.Shown != lastShown {
 			lastShown = st.Shown
 			desk.SetSystemTrayIcon(dotResource(st.Shown))
 		}
 	}
 	agent.OnChange(func() { fyne.Do(update) })
+
+	updateBtn.OnTapped = func() {
+		flashing = true
+		updateBtn.Disable()
+		for _, b := range btns {
+			b.Disable()
+		}
+		fwLbl.SetText("Flashing " + firmware.Version + " — do not unplug…")
+		go func() {
+			err := agent.FlashFirmware(esptoolPath(), firmware.Bin)
+			fyne.Do(func() {
+				flashing = false
+				updateBtn.Enable()
+				for _, b := range btns {
+					b.Enable()
+				}
+				if err != nil {
+					log.Printf("flash failed: %v", err)
+					fwLbl.SetText("Flash failed — see logs; device is still flashable")
+					return
+				}
+				fwLbl.SetText("Flashed — waiting for device…")
+			})
+		}()
+	}
 
 	grid := container.NewGridWithColumns(2)
 	for _, b := range btns[1 : len(btns)-1] { // states except "off"
@@ -103,6 +150,7 @@ func main() {
 		grid,
 		btns[len(btns)-1], // off, full width
 		widget.NewSeparator(),
+		fwLbl, updateBtn,
 		loginCheck,
 	))
 	w.Resize(fyne.NewSize(250, 0)) // height from content; keep it compact

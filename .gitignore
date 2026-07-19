@@ -1,3 +1,5 @@
 files.zip
 .venv/
 dist/
+build/
+firmware/busylight_round/build/
