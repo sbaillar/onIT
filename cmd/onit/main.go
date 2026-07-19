@@ -31,6 +31,15 @@ func main() {
 	setupLogging()
 
 	a := app.NewWithID("casa.baillargeon.onit")
+
+	if old, err := takeoverInstance(pidFilePath(), isOnitProcess); err != nil {
+		log.Printf("single-instance check failed: %v", err)
+	} else if old != 0 {
+		msg := fmt.Sprintf("Detected running onIT (pid %d) - stopped it and started fresh.", old)
+		log.Print(msg)
+		a.SendNotification(fyne.NewNotification("onIT", msg))
+	}
+
 	agent := busylight.NewAgent()
 
 	w := a.NewWindow("onIT")
@@ -187,6 +196,8 @@ func main() {
 				for _, d := range prefsDirs() {
 					os.RemoveAll(d)
 				}
+				os.Remove(pidFilePath())
+				os.Remove(logPath())
 				if err := removeInstalledFiles(); err != nil {
 					log.Printf("uninstall: app files: %v", err)
 				}
