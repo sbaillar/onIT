@@ -19,7 +19,9 @@ onIT ships with a shared app registration, so for most people this is all:
 
 1. Click **Sign in to Microsoft**
 2. A code appears - enter it at **microsoft.com/devicelogin**
-3. Approve the request (Presence.Read - onIT can only see your presence)
+3. Approve the request (Presence.Read - onIT can only see your presence).
+   The approval screen may say "Microsoft Graph Command Line Tools" -
+   that is the built-in Microsoft sign-in client onIT uses.
 
 If your organization requires admin approval, the sign-in page says so -
 an admin approves once and after that everyone in your org can sign in.

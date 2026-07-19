@@ -21,10 +21,13 @@ var (
 
 const graphScope = "offline_access https://graph.microsoft.com/Presence.Read"
 
-// DefaultClientID is the shared multi-tenant app registration ("onIT",
-// owned by Sonny). Users only click Sign in; orgs that want their own
-// registration can override it in Presence setup -> Advanced.
-const DefaultClientID = ""
+// DefaultClientID is the built-in public client used when no custom
+// registration is configured. Currently Microsoft Graph PowerShell's
+// well-known first-party ID: present in every tenant, so sign-in needs no
+// app registration at all (the consent screen shows "Microsoft Graph
+// Command Line Tools"). Swap for onIT's own multi-tenant registration
+// when available; Presence setup -> Advanced overrides it either way.
+const DefaultClientID = "14d82eec-204b-4c2f-b7e8-296a70dab67e"
 
 type graphCreds struct {
 	ClientID     string `json:"client_id"`
