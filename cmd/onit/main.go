@@ -118,9 +118,6 @@ func main() {
 		showGraphSetup(a, agent, func() { fyne.Do(update) })
 	})
 
-	uninstallBtn := widget.NewButton("Uninstall onIT...", nil)
-	uninstallBtn.Importance = widget.DangerImportance
-
 	loginCheck := widget.NewCheck("Start at login", nil)
 	loginCheck.SetChecked(autostartEnabled())
 	loginCheck.OnChanged = func(on bool) {
@@ -134,10 +131,40 @@ func main() {
 		fyne.NewMenuItemSeparator(),
 	}
 	menuItems = append(menuItems, stateItems...)
+	doUninstall := func() {
+		w.Show()
+		dialog.ShowConfirm("Uninstall onIT",
+			"This removes the start-at-login entry, sign-in tokens,\n"+
+				"all settings, and the app itself. The device is not affected.\n\nContinue?",
+			func(ok bool) {
+				if !ok {
+					return
+				}
+				if err := setAutostart(false); err != nil {
+					log.Printf("uninstall: autostart: %v", err)
+				}
+				if err := busylight.RemoveToken(); err != nil {
+					log.Printf("uninstall: token: %v", err)
+				}
+				for _, d := range prefsDirs() {
+					os.RemoveAll(d)
+				}
+				os.Remove(pidFilePath())
+				os.Remove(logPath())
+				if err := removeInstalledFiles(); err != nil {
+					log.Printf("uninstall: app files: %v", err)
+				}
+				done := dialog.NewInformation("Uninstalled", uninstallDoneMsg, w)
+				done.SetOnClosed(a.Quit)
+				done.Show()
+			}, w)
+	}
+
 	menuItems = append(menuItems,
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Check for updates...", func() { w.Show(); checkForUpdates(w) }),
 		fyne.NewMenuItem("About onIT...", func() { showAbout(a) }),
+		fyne.NewMenuItem("Uninstall onIT...", doUninstall),
 	)
 	trayMenu := fyne.NewMenu("onIT", menuItems...)
 	desk, isDesk := a.(desktop.App)
@@ -278,7 +305,6 @@ func main() {
 			fwLbl, fwBtn,
 			graphSetupBtn,
 			loginCheck,
-			uninstallBtn,
 		),
 	))
 	w.SetContent(container.NewVBox(
@@ -291,33 +317,6 @@ func main() {
 		settings,
 	))
 
-	uninstallBtn.OnTapped = func() {
-		dialog.ShowConfirm("Uninstall onIT",
-			"This removes the start-at-login entry, sign-in tokens,\n"+
-				"all settings, and the app itself. The device is not affected.\n\nContinue?",
-			func(ok bool) {
-				if !ok {
-					return
-				}
-				if err := setAutostart(false); err != nil {
-					log.Printf("uninstall: autostart: %v", err)
-				}
-				if err := busylight.RemoveToken(); err != nil {
-					log.Printf("uninstall: token: %v", err)
-				}
-				for _, d := range prefsDirs() {
-					os.RemoveAll(d)
-				}
-				os.Remove(pidFilePath())
-				os.Remove(logPath())
-				if err := removeInstalledFiles(); err != nil {
-					log.Printf("uninstall: app files: %v", err)
-				}
-				done := dialog.NewInformation("Uninstalled", uninstallDoneMsg, w)
-				done.SetOnClosed(a.Quit)
-				done.Show()
-			}, w)
-	}
 	w.Resize(fyne.NewSize(260, 0)) // height from content; keep it compact
 
 	// first launch from the installed location: enable the login item
