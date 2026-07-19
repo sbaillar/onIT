@@ -91,7 +91,25 @@ func (l *Light) ensureLocked() bool {
 	l.connected.Store(true)
 	log.Printf("Serial connected: %s", name)
 	go l.reader(port)
-	port.Write([]byte("VERSION\n")) // boot banner is easy to miss; just ask
+	// The boot banner is easy to miss and the first query can be eaten by
+	// the open-triggered reset, so keep asking until the device answers.
+	go func() {
+		for range 5 {
+			l.mu.Lock()
+			open := l.port == port
+			if open {
+				port.Write([]byte("VERSION\n"))
+			}
+			l.mu.Unlock()
+			if !open {
+				return
+			}
+			time.Sleep(2 * time.Second)
+			if v, _ := l.version.Load().(string); v != "" {
+				return
+			}
+		}
+	}()
 	return true
 }
 
@@ -143,6 +161,12 @@ func (l *Light) Connected() bool {
 func (l *Light) Version() string {
 	v, _ := l.version.Load().(string)
 	return v
+}
+
+// ClearVersion forgets the cached firmware version (called before a flash
+// so a lost banner can never leave a stale pre-flash version on display).
+func (l *Light) ClearVersion() {
+	l.version.Store("")
 }
 
 // PortName returns the last successfully opened port path, even after Close.

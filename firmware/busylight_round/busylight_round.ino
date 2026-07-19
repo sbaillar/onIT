@@ -6,6 +6,7 @@
  * Board:   ESP32S3 Dev Module (USB CDC not needed - CH343P bridges UART0)
  *
  * Serial in : STATE:available|meeting|sharing|flashing|off   @115200
+ *             STATE:custom:<text>       (yellow screen, text auto-fitted)
  *             VERSION                    (query firmware version)
  * Serial out: VERSION:x.y.z     (at boot and on VERSION query)
  * Watchdog  : no serial for 5s -> OFF/STALE (except FLASHING: sticky,
@@ -16,7 +17,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28 for your revision.
  */
 
-#define FW_VERSION "1.2.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.3.0"   // extracted by `make firmware`, embedded in onIT
 
 #include <Arduino_GFX_Library.h>
 #include <Adafruit_GFX.h>   // only for its Fonts/ include path
@@ -46,6 +47,7 @@
 #define C_BLACK       0x0000
 #define C_GRAY_RING   0x4208  // #404040
 #define C_GRAY_TEXT   0x5ACB  // #585858
+#define C_YELLOW      0xEE09  // #E8C24A
 
 // Presenting pulse: 8-step ring color LUT, white -> #787CB8 -> white (sine)
 const uint16_t PULSE_LUT[8] = {
@@ -61,11 +63,12 @@ const uint16_t FLASH_LUT[8] = {
 Arduino_DataBus *bus = new Arduino_ESP32SPI(LCD_DC, LCD_CS, LCD_SCK, LCD_MOSI, LCD_MISO);
 Arduino_GFX *gfx = new Arduino_GC9A01(bus, LCD_RST, 0 /*rotation*/, true /*IPS*/);
 
-enum State { ST_OFF, ST_AVAILABLE, ST_MEETING, ST_SHARING, ST_FLASHING };
+enum State { ST_OFF, ST_AVAILABLE, ST_MEETING, ST_SHARING, ST_FLASHING, ST_CUSTOM };
 State state = ST_OFF;
 
 unsigned long lastSerial   = 0;
 unsigned long lastStateChg = 0;
+String customText;
 String lineBuf;
 
 // ---------------------------------------------------------------- backlight
@@ -145,6 +148,43 @@ void drawSharing() {
   backlight(100);
 }
 
+uint16_t textW(const char *s, const GFXfont *f) {
+  int16_t x1, y1; uint16_t w, h;
+  gfx->setFont(f);
+  gfx->setTextSize(1);
+  gfx->getTextBounds(s, 0, 0, &x1, &y1, &w, &h);
+  return w;
+}
+
+// custom message: yellow face, text auto-fitted (shrink, then wrap to 2 lines)
+void drawCustom() {
+  gfx->fillScreen(C_YELLOW);
+  ringSolid(114, 5, C_BLACK);
+  backlight(100);
+  const GFXfont *fonts[3] = {&FreeSansBold18pt7b, &FreeSansBold12pt7b, &FreeSansBold9pt7b};
+  const uint16_t maxW = 180;
+  for (int i = 0; i < 3; i++) {
+    if (textW(customText.c_str(), fonts[i]) <= maxW) {
+      textCentered(customText.c_str(), 120, fonts[i], C_BLACK);
+      return;
+    }
+  }
+  int best = -1, mid = customText.length() / 2;
+  for (int i = 0; i < (int)customText.length(); i++)
+    if (customText[i] == ' ' && (best < 0 || abs(i - mid) < abs(best - mid))) best = i;
+  if (best > 0) {
+    String a = customText.substring(0, best), b = customText.substring(best + 1);
+    for (int i = 1; i < 3; i++) {
+      if (textW(a.c_str(), fonts[i]) <= maxW && textW(b.c_str(), fonts[i]) <= maxW) {
+        textCentered(a.c_str(), 96, fonts[i], C_BLACK);
+        textCentered(b.c_str(), 144, fonts[i], C_BLACK);
+        return;
+      }
+    }
+  }
+  textCentered(customText.c_str(), 120, fonts[2], C_BLACK); // best effort
+}
+
 void drawFlashing() {
   gfx->fillScreen(C_RED_BUSY);
   ringSolid(114, 8, C_RED_MRING);
@@ -169,6 +209,7 @@ void setState(State s) {
     case ST_MEETING:   drawMeeting();   break;
     case ST_SHARING:   drawSharing();   break;
     case ST_FLASHING:  drawFlashing();  break;
+    case ST_CUSTOM:    drawCustom();    break;
     default:           drawOff();       break;
   }
 }
@@ -179,6 +220,16 @@ void handleLine(const String &line) {
   if (!line.startsWith("STATE:")) return;
   lastSerial = millis();
   String s = line.substring(6); s.trim();
+  if (s.startsWith("custom:")) {
+    String msg = s.substring(7);
+    if (state != ST_CUSTOM || msg != customText) {  // redraw on text change too
+      customText = msg;
+      state = ST_CUSTOM;
+      lastStateChg = millis();
+      drawCustom();
+    }
+    return;
+  }
   if      (s == "available") setState(ST_AVAILABLE);
   else if (s == "meeting")   setState(ST_MEETING);
   else if (s == "sharing")   setState(ST_SHARING);

@@ -41,7 +41,8 @@ func (a *Agent) FlashFirmware(esptool string, image []byte) error {
 	a.light.Send("flashing")
 	time.Sleep(400 * time.Millisecond) // let it render before we drop the port
 
-	a.light.Close() // release the port for esptool
+	a.light.Close()        // release the port for esptool
+	a.light.ClearVersion() // the answer must come from the new firmware
 	log.Printf("Flashing %d bytes to %s", len(image), port)
 	out, err := exec.Command(esptool,
 		"--chip", "esp32s3", "--port", port, "--baud", "460800",

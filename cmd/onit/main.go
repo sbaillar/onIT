@@ -54,20 +54,18 @@ func main() {
 	w.SetFixedSize(true)
 	w.SetCloseIntercept(w.Hide)
 
-	// header: the window mirrors the device - big state dot + state name
-	headerDot := canvas.NewCircle(stateColors["off"])
-	headerName := canvas.NewText("Off", color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF})
-	headerName.TextSize = 22
-	headerName.TextStyle = fyne.TextStyle{Bold: true}
+	// the window mirrors the device: a round face that shows the live state
+	face := canvas.NewCircle(color.NRGBA{0x10, 0x10, 0x18, 0xFF})
+	face.StrokeColor = stateColors["off"]
+	face.StrokeWidth = 7
+	faceName := canvas.NewText("Off", color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF})
+	faceName.TextSize = 22
+	faceName.TextStyle = fyne.TextStyle{Bold: true}
+	deviceFace := container.NewGridWrap(fyne.NewSize(190, 190),
+		container.NewStack(face, container.NewCenter(faceName)))
 	capLbl := widget.NewLabel("starting...")
 	capLbl.Importance = widget.LowImportance
-	header := container.NewVBox(
-		container.NewHBox(
-			container.NewGridWrap(fyne.NewSize(24, 34), layoutCircle(headerDot)),
-			headerName,
-		),
-		capLbl,
-	)
+	header := container.NewVBox(container.NewCenter(deviceFace), container.NewCenter(capLbl))
 
 	// one choice list drives both the window buttons and the tray menu
 	type choice struct{ label, state string }
@@ -89,6 +87,18 @@ func main() {
 			stateItems[i].Icon = dotResource(c.state)
 		}
 	}
+
+	customEntry := widget.NewEntry()
+	customEntry.SetPlaceHolder("Custom message...")
+	showCustom := func(msg string) {
+		msg = strings.TrimSpace(msg)
+		if msg != "" {
+			agent.SetOverride("custom:" + msg)
+		}
+	}
+	customEntry.OnSubmitted = showCustom
+	customBtn := widget.NewButtonWithIcon("", dotResource("custom"), func() { showCustom(customEntry.Text) })
+	customRow := container.NewBorder(nil, nil, nil, customBtn, customEntry)
 
 	fwLbl := widget.NewLabel("Firmware: ...")
 	fwLbl.Importance = widget.LowImportance
@@ -118,7 +128,7 @@ func main() {
 	menuItems = append(menuItems,
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Check for updates...", func() { w.Show(); checkForUpdates(w) }),
-		fyne.NewMenuItem("About onIT...", func() { w.Show(); showAbout(w) }),
+		fyne.NewMenuItem("About onIT...", func() { showAbout(a) }),
 	)
 	trayMenu := fyne.NewMenu("onIT", menuItems...)
 	desk, isDesk := a.(desktop.App)
@@ -132,10 +142,22 @@ func main() {
 	update = func() {
 		st := agent.Status()
 
-		headerDot.FillColor = stateColorOr(st.Shown)
-		headerDot.Refresh()
-		headerName.Text = title(st.Shown)
-		headerName.Refresh()
+		key := stateKey(st.Shown)
+		fc := faceStyles[key]
+		face.FillColor = fc.fill
+		face.StrokeColor = fc.ring
+		face.Refresh()
+		name := title(key)
+		if key == "custom" {
+			name = strings.TrimPrefix(st.Shown, "custom:")
+		}
+		faceName.Text = name
+		faceName.Color = fc.text
+		faceName.TextSize = 22
+		if len(name) > 12 {
+			faceName.TextSize = 14
+		}
+		faceName.Refresh()
 
 		src := "no presence source"
 		switch {
@@ -187,7 +209,7 @@ func main() {
 
 		if isDesk && st.Shown != lastShown {
 			lastShown = st.Shown
-			desk.SetSystemTrayIcon(dotResource(st.Shown))
+			desk.SetSystemTrayIcon(dotResource(stateKey(st.Shown)))
 		}
 	}
 	agent.OnChange(func() { fyne.Do(update) })
@@ -226,6 +248,7 @@ func main() {
 		widget.NewSeparator(),
 		btns[0], // Auto (Teams)
 		grid,
+		customRow,
 		widget.NewSeparator(),
 		fwLbl, fwBtn,
 		widget.NewSeparator(),
@@ -283,15 +306,11 @@ func main() {
 	}
 }
 
-func stateColorOr(state string) color.NRGBA {
-	if c, ok := stateColors[state]; ok {
-		return c
-	}
-	return stateColors["off"]
-}
-
-// layoutCircle keeps a canvas circle round inside a GridWrap cell by
-// padding it vertically to match the header text height.
-func layoutCircle(c *canvas.Circle) fyne.CanvasObject {
-	return container.NewPadded(c)
+// faceStyles drive the round device mirror per state.
+var faceStyles = map[string]struct{ fill, ring, text color.NRGBA }{
+	"available": {color.NRGBA{0x10, 0x10, 0x18, 0xFF}, stateColors["available"], color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
+	"meeting":   {stateColors["meeting"], color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
+	"sharing":   {stateColors["sharing"], color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
+	"custom":    {stateColors["custom"], color.NRGBA{0x10, 0x10, 0x18, 0xFF}, color.NRGBA{0x10, 0x10, 0x18, 0xFF}},
+	"off":       {color.NRGBA{0x0A, 0x0A, 0x0E, 0xFF}, stateColors["off"], color.NRGBA{0xB0, 0xB0, 0xC0, 0xFF}},
 }

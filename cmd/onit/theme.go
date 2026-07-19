@@ -25,6 +25,10 @@ func (t onitTheme) Color(n fyne.ThemeColorName, _ fyne.ThemeVariant) color.Color
 		return color.NRGBA{0x18, 0x18, 0x24, 0xFF}
 	case theme.ColorNameSeparator:
 		return color.NRGBA{0x2A, 0x2A, 0x3A, 0xFF}
+	case theme.ColorNameDisabled: // secondary text (LowImportance labels)
+		return color.NRGBA{0x9A, 0x9A, 0xAC, 0xFF}
+	case theme.ColorNamePlaceHolder:
+		return color.NRGBA{0x6E, 0x6E, 0x82, 0xFF}
 	case theme.ColorNameError:
 		return color.NRGBA{0xC0, 0x30, 0x48, 0xFF} // device busy red
 	}
