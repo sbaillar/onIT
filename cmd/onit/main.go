@@ -4,6 +4,7 @@ package main
 import (
 	"flag"
 	"log"
+	"os"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -14,6 +15,8 @@ import (
 
 	"onit/internal/busylight"
 )
+
+const autoLabel = "Auto (Teams)"
 
 func title(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
@@ -32,13 +35,22 @@ func main() {
 
 	teamsLbl := widget.NewLabel("Teams: …")
 	lightLbl := widget.NewLabel("Light: …")
-	modeLbl := widget.NewLabel("Mode: Auto (Teams)")
+	modeLbl := widget.NewLabel("Mode: " + autoLabel)
 
-	autoBtn := widget.NewButton("Auto (Teams)", func() { agent.SetOverride("") })
-	stateBtns := make([]*widget.Button, len(busylight.States))
-	for i, s := range busylight.States {
-		state := s
-		stateBtns[i] = widget.NewButton(title(state), func() { agent.SetOverride(state) })
+	// one choice list drives both the window buttons and the tray menu
+	type choice struct{ label, state string }
+	choices := []choice{{autoLabel, ""}}
+	for _, s := range busylight.States {
+		choices = append(choices, choice{title(s), s})
+	}
+	btns := make([]*widget.Button, len(choices))
+	menuItems := []*fyne.MenuItem{
+		fyne.NewMenuItem("Open onIT", func() { w.Show(); w.RequestFocus() }),
+		fyne.NewMenuItemSeparator(),
+	}
+	for i, c := range choices {
+		btns[i] = widget.NewButton(c.label, func() { agent.SetOverride(c.state) })
+		menuItems = append(menuItems, fyne.NewMenuItem(c.label, func() { agent.SetOverride(c.state) }))
 	}
 
 	loginCheck := widget.NewCheck("Start at login", nil)
@@ -49,19 +61,9 @@ func main() {
 		}
 	}
 
-	// menu bar: quick-set entries + Open (Fyne appends Quit itself)
 	desk, isDesk := a.(desktop.App)
 	if isDesk {
-		items := []*fyne.MenuItem{
-			fyne.NewMenuItem("Open onIT", func() { w.Show(); w.RequestFocus() }),
-			fyne.NewMenuItemSeparator(),
-			fyne.NewMenuItem("Auto (Teams)", func() { agent.SetOverride("") }),
-		}
-		for _, s := range busylight.States {
-			state := s
-			items = append(items, fyne.NewMenuItem(title(state), func() { agent.SetOverride(state) }))
-		}
-		desk.SetSystemTrayMenu(fyne.NewMenu("onIT", items...))
+		desk.SetSystemTrayMenu(fyne.NewMenu("onIT", menuItems...)) // Fyne appends Quit
 		desk.SetSystemTrayIcon(dotResource("off"))
 	}
 
@@ -79,7 +81,7 @@ func main() {
 			lightLbl.SetText("Light: not found")
 		}
 		if st.Override == "" {
-			modeLbl.SetText("Mode: Auto (Teams)")
+			modeLbl.SetText("Mode: " + autoLabel)
 		} else {
 			modeLbl.SetText("Mode: manual (" + st.Override + ")")
 		}
@@ -90,20 +92,25 @@ func main() {
 	}
 	agent.OnChange(func() { fyne.Do(update) })
 
+	grid := container.NewGridWithColumns(2)
+	for _, b := range btns[1 : len(btns)-1] { // states except "off"
+		grid.Add(b)
+	}
 	w.SetContent(container.NewVBox(
 		teamsLbl, lightLbl, modeLbl,
 		widget.NewSeparator(),
-		autoBtn,
-		container.NewGridWithColumns(2,
-			stateBtns[0], stateBtns[1], stateBtns[2], stateBtns[3]),
-		stateBtns[4], // off, full width
+		btns[0], // Auto (Teams)
+		grid,
+		btns[len(btns)-1], // off, full width
 		widget.NewSeparator(),
 		loginCheck,
 	))
 	w.Resize(fyne.NewSize(250, 0)) // height from content; keep it compact
 
-	// first launch: install the login item (checkbox is the off switch)
-	if !a.Preferences().Bool("autostartConfigured") {
+	// first launch from the installed location: enable the login item
+	// (skipped for dev builds so a temp path never lands in the plist)
+	exe, _ := os.Executable()
+	if !a.Preferences().Bool("autostartConfigured") && strings.HasPrefix(exe, "/Applications/") {
 		if err := setAutostart(true); err != nil {
 			log.Printf("autostart install failed: %v", err)
 		} else {

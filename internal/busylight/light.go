@@ -1,25 +1,35 @@
 package busylight
 
 import (
+	"bufio"
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.bug.st/serial"
 	"go.bug.st/serial/enumerator"
 )
 
-const baud = 115200
+const (
+	baud        = 115200
+	scanBackoff = 10 * time.Second // don't re-enumerate USB on every heartbeat
+)
 
-// USB vendor IDs to match: Espressif native USB, WCH CH34x bridge.
-var usbVIDs = map[string]bool{"303A": true, "1A86": true}
+// USB VID:PID pairs to match: Espressif native USB, WCH CH343 bridge.
+var usbIDs = map[[2]string]bool{
+	{"303A", "1001"}: true,
+	{"1A86", "55D3"}: true,
+}
 
 // Light owns the serial port. Reconnects lazily on every send.
 type Light struct {
-	mu   sync.Mutex
-	port serial.Port
-	Cmds chan string // CMD payloads read from the device
+	mu        sync.Mutex
+	port      serial.Port
+	nextScan  time.Time
+	connected atomic.Bool
+	Cmds      chan string // CMD payloads read from the device
 }
 
 func NewLight() *Light {
@@ -33,7 +43,7 @@ func findPort() string {
 		return ""
 	}
 	for _, p := range ports {
-		if p.IsUSB && usbVIDs[strings.ToUpper(p.VID)] {
+		if p.IsUSB && usbIDs[[2]string{strings.ToUpper(p.VID), strings.ToUpper(p.PID)}] {
 			return p.Name
 		}
 	}
@@ -60,17 +70,23 @@ func (l *Light) ensureLocked() bool {
 	if l.port != nil {
 		return true
 	}
+	if time.Now().Before(l.nextScan) {
+		return false
+	}
 	name := findPort()
 	if name == "" {
+		l.nextScan = time.Now().Add(scanBackoff)
 		return false
 	}
 	port, err := serial.Open(name, &serial.Mode{BaudRate: baud})
 	if err != nil {
 		log.Printf("open %s failed: %v", name, err)
+		l.nextScan = time.Now().Add(scanBackoff)
 		return false
 	}
 	time.Sleep(500 * time.Millisecond) // board may reset on open
 	l.port = port
+	l.connected.Store(true)
 	log.Printf("Serial connected: %s", name)
 	go l.reader(port)
 	return true
@@ -78,29 +94,16 @@ func (l *Light) ensureLocked() bool {
 
 // reader pushes CMD lines from the device onto l.Cmds until the port dies.
 func (l *Light) reader(port serial.Port) {
-	buf := make([]byte, 256)
-	var line []byte
-	for {
-		n, err := port.Read(buf)
-		if err != nil {
-			l.drop(port)
-			return
-		}
-		for _, b := range buf[:n] {
-			if b != '\n' {
-				line = append(line, b)
-				continue
-			}
-			s := strings.TrimSpace(string(line))
-			line = line[:0]
-			if cmd, ok := strings.CutPrefix(s, "CMD:"); ok {
-				select {
-				case l.Cmds <- cmd:
-				default:
-				}
+	sc := bufio.NewScanner(port)
+	for sc.Scan() {
+		if cmd, ok := strings.CutPrefix(strings.TrimSpace(sc.Text()), "CMD:"); ok {
+			select {
+			case l.Cmds <- cmd:
+			default:
 			}
 		}
 	}
+	l.drop(port)
 }
 
 // drop closes port if it is still the active one.
@@ -110,27 +113,27 @@ func (l *Light) drop(port serial.Port) {
 	if l.port == port {
 		l.port.Close()
 		l.port = nil
+		l.connected.Store(false)
 	}
 }
 
-// Send writes a state to the device. Returns false if no device is connected.
-func (l *Light) Send(state string) bool {
+// Send writes a state to the device, connecting first if needed.
+// Only the agent's push goroutine calls this; the UI never blocks on it.
+func (l *Light) Send(state string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if !l.ensureLocked() {
-		return false
+		return
 	}
 	if _, err := l.port.Write([]byte("STATE:" + state + "\n")); err != nil {
 		l.port.Close()
 		l.port = nil
-		return false
+		l.connected.Store(false)
 	}
-	return true
 }
 
-// Connected reports whether a serial port is currently open.
+// Connected reports whether a serial port is currently open (lock-free,
+// safe to call from UI threads while a reconnect is in progress).
 func (l *Light) Connected() bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.port != nil
+	return l.connected.Load()
 }

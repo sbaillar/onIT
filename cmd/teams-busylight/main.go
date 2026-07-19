@@ -2,13 +2,15 @@
 package main
 
 import (
-	"os"
+	"flag"
 
 	"onit/internal/busylight"
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "-ports" {
+	ports := flag.Bool("ports", false, "list serial ports and exit")
+	flag.Parse()
+	if *ports {
 		busylight.ListPorts()
 		return
 	}

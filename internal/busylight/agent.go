@@ -8,7 +8,7 @@ import (
 
 const heartbeat = 2 * time.Second // firmware watchdog is 5s
 
-// States accepted by the firmware, in display order.
+// States accepted by the firmware, in display order ("off" last).
 var States = []string{"available", "meeting", "muted", "sharing", "off"}
 
 // Status is a snapshot of the agent for UIs.
@@ -20,22 +20,29 @@ type Status struct {
 }
 
 // Agent drives the light from Teams presence, with an optional manual override.
+// All serial writes happen on a single push goroutine, so a state change can
+// never be overwritten by a concurrent stale heartbeat.
 type Agent struct {
 	light *Light
-	reqID int
+	kick  chan struct{} // wakes the push goroutine after a state change
 
 	mu         sync.Mutex
 	teamsUp    bool
 	teamsState string // last state derived from Teams; "off" while disconnected
 	override   string // "" = auto
+	last       Status // last status delivered to onChange
 	onChange   func()
 }
 
 func NewAgent() *Agent {
-	return &Agent{light: NewLight(), teamsState: "off"}
+	return &Agent{
+		light:      NewLight(),
+		kick:       make(chan struct{}, 1),
+		teamsState: "off",
+	}
 }
 
-// OnChange registers a callback fired whenever Status may have changed.
+// OnChange registers a callback fired when Status actually changes.
 // Must be set before Run.
 func (a *Agent) OnChange(f func()) { a.onChange = f }
 
@@ -50,6 +57,10 @@ func (a *Agent) effectiveLocked() string {
 func (a *Agent) Status() Status {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.statusLocked()
+}
+
+func (a *Agent) statusLocked() Status {
 	return Status{
 		TeamsConnected: a.teamsUp,
 		LightConnected: a.light.Connected(),
@@ -63,7 +74,7 @@ func (a *Agent) SetOverride(state string) {
 	a.mu.Lock()
 	a.override = state
 	a.mu.Unlock()
-	a.push()
+	a.wake()
 }
 
 func (a *Agent) setTeams(up bool, state string) {
@@ -73,29 +84,51 @@ func (a *Agent) setTeams(up bool, state string) {
 	a.teamsState = state
 	auto := a.override == ""
 	a.mu.Unlock()
-	if changed && auto {
+	if !changed {
+		return
+	}
+	if auto {
 		log.Printf("state -> %s", state)
 	}
-	a.push()
+	a.wake()
 }
 
-// push sends the effective state to the device and notifies the UI.
-func (a *Agent) push() {
-	a.mu.Lock()
-	state := a.effectiveLocked()
-	a.mu.Unlock()
-	a.light.Send(state)
-	if a.onChange != nil {
-		a.onChange()
+// wake nudges the push goroutine; coalesces if one is already pending.
+func (a *Agent) wake() {
+	select {
+	case a.kick <- struct{}{}:
+	default:
 	}
 }
 
-// Run blocks forever: heartbeats the device and maintains the Teams session.
+// notify fires onChange if the status differs from the last one delivered.
+func (a *Agent) notify() {
+	a.mu.Lock()
+	st := a.statusLocked()
+	changed := st != a.last
+	a.last = st
+	cb := a.onChange
+	a.mu.Unlock()
+	if changed && cb != nil {
+		cb()
+	}
+}
+
+// Run blocks forever: pushes states to the device and maintains the Teams
+// session. The ticker doubles as the heartbeat for the firmware watchdog.
 func (a *Agent) Run() {
 	go func() {
+		tick := time.NewTicker(heartbeat)
 		for {
-			a.push()
-			time.Sleep(heartbeat)
+			select {
+			case <-a.kick:
+			case <-tick.C:
+			}
+			a.mu.Lock()
+			state := a.effectiveLocked()
+			a.mu.Unlock()
+			a.light.Send(state)
+			a.notify()
 		}
 	}()
 	for {

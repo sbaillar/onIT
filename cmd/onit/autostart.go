@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const launchAgentLabel = "casa.baillargeon.onit"
@@ -50,9 +51,11 @@ func setAutostart(on bool) error {
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
 	}
-	if err := os.MkdirAll(filepath.Dir(plistPath()), 0o755); err != nil {
+	exe = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(exe)
+	p := plistPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(plistPath(),
+	return os.WriteFile(p,
 		[]byte(fmt.Sprintf(plistTemplate, launchAgentLabel, exe)), 0o644)
 }

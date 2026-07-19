@@ -15,14 +15,24 @@ import (
 const (
 	wsURL     = "ws://127.0.0.1:8124"
 	retryWait = 5 * time.Second
+
+	maxWSMessage = 1 << 20
+	pingEvery    = 30 * time.Second
+	readTimeout  = 75 * time.Second // > pingEvery; catches half-open sockets
+
+	// The only device command forwarded to Teams; anything else from the
+	// serial port (buggy or foreign firmware) is dropped.
+	allowedCmd = "toggle-mute"
 )
 
-var identity = map[string]string{
-	"protocol-version": "2.0.0",
-	"manufacturer":     "Sonny",
-	"device":           "BusyLight-Round",
-	"app":              "teams-busylight",
-	"app-version":      "2.0",
+func identityParams() url.Values {
+	return url.Values{
+		"protocol-version": {"2.0.0"},
+		"manufacturer":     {"Sonny"},
+		"device":           {"BusyLight-Round"},
+		"app":              {"teams-busylight"},
+		"app-version":      {"2.0"},
+	}
 }
 
 func tokenFile() string {
@@ -74,14 +84,12 @@ func mapState(ms *meetingState) string {
 }
 
 // session runs one WebSocket connection until it fails, feeding a.setTeams
-// and forwarding device commands (taps) up to Teams.
+// and forwarding device taps up to Teams.
 func (a *Agent) session() error {
-	params := url.Values{}
-	for k, v := range identity {
-		params.Set(k, v)
-	}
-	if tok := loadToken(); tok != "" {
-		params.Set("token", tok)
+	params := identityParams()
+	token := loadToken()
+	if token != "" {
+		params.Set("token", token)
 	}
 
 	ws, _, err := websocket.DefaultDialer.Dial(wsURL+"?"+params.Encode(), nil)
@@ -92,18 +100,26 @@ func (a *Agent) session() error {
 	log.Print("Connected to Teams local API")
 
 	// drop taps that queued up while Teams was unreachable
+drain:
 	for {
 		select {
 		case <-a.light.Cmds:
-			continue
 		default:
+			break drain
 		}
-		break
 	}
-	a.setTeams(true, "available")
+	a.setTeams(true, mapState(&meetingState{}))
 
-	msgs := make(chan []byte)
+	ws.SetReadLimit(maxWSMessage)
+	ws.SetReadDeadline(time.Now().Add(readTimeout))
+	ws.SetPongHandler(func(string) error {
+		return ws.SetReadDeadline(time.Now().Add(readTimeout))
+	})
+
+	msgs := make(chan []byte, 1)
 	errc := make(chan error, 1)
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
 		for {
 			_, data, err := ws.ReadMessage()
@@ -112,10 +128,31 @@ func (a *Agent) session() error {
 				close(msgs)
 				return
 			}
-			msgs <- data
+			ws.SetReadDeadline(time.Now().Add(readTimeout))
+			select {
+			case msgs <- data:
+			case <-done:
+				return
+			}
 		}
 	}()
 
+	reqID := 0
+	send := func(action string) error {
+		reqID++
+		return ws.WriteJSON(map[string]any{
+			"requestId":  reqID,
+			"apiVersion": "2.0.0",
+			"action":     action,
+		})
+	}
+	// ask for the real meeting state so a mid-meeting (re)connect is correct
+	if err := send("query-meeting-state"); err != nil {
+		return err
+	}
+
+	ping := time.NewTicker(pingEvery)
+	defer ping.Stop()
 	for {
 		select {
 		case data, ok := <-msgs:
@@ -126,23 +163,28 @@ func (a *Agent) session() error {
 			if err := json.Unmarshal(data, &msg); err != nil {
 				continue
 			}
-			if msg.TokenRefresh != "" {
-				saveToken(msg.TokenRefresh)
+			if msg.TokenRefresh != "" && msg.TokenRefresh != token {
+				token = msg.TokenRefresh
+				saveToken(token)
 			}
 			if msg.MeetingUpdate != nil && msg.MeetingUpdate.MeetingState != nil {
 				a.setTeams(true, mapState(msg.MeetingUpdate.MeetingState))
 			}
 		case cmd := <-a.light.Cmds:
-			a.reqID++
-			err := ws.WriteJSON(map[string]any{
-				"requestId":  a.reqID,
-				"apiVersion": "2.0.0",
-				"action":     cmd, // e.g. toggle-mute
-			})
+			if cmd != allowedCmd {
+				log.Printf("ignoring device command %q", cmd)
+				continue
+			}
+			if err := send(cmd); err != nil {
+				return err
+			}
+			log.Printf("Sent action: %s (#%d)", cmd, reqID)
+		case <-ping.C:
+			err := ws.WriteControl(websocket.PingMessage, nil,
+				time.Now().Add(5*time.Second))
 			if err != nil {
 				return err
 			}
-			log.Printf("Sent action: %s (#%d)", cmd, a.reqID)
 		}
 	}
 }
