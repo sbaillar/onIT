@@ -4,17 +4,16 @@ package main
 import (
 	"flag"
 	"fmt"
-	"image/color"
 	"log"
 	"os"
 	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"onit/internal/busylight"
@@ -55,21 +54,15 @@ func main() {
 	w.SetFixedSize(true)
 	w.SetCloseIntercept(w.Hide)
 
-	// the window mirrors the device: a round face that shows the live state
-	face := canvas.NewCircle(color.NRGBA{0x10, 0x10, 0x18, 0xFF})
-	face.StrokeColor = stateColors["off"]
-	face.StrokeWidth = 7
-	faceName := canvas.NewText("Off", color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF})
-	faceName.TextSize = 22
-	faceName.TextStyle = fyne.TextStyle{Bold: true}
-	deviceFace := container.NewGridWrap(fyne.NewSize(190, 190),
-		container.NewStack(face, container.NewCenter(faceName)))
+	// the window mirrors the device: the face redraws the firmware screens
+	face := newDeviceFace()
+	lastEmoji := "" // name of the emoji last sent, for the face
 	capLbl := widget.NewLabel("starting...")
 	capLbl.Importance = widget.LowImportance
 	busyBar := widget.NewProgressBarInfinite()
 	busyBar.Stop()
 	busyBar.Hide()
-	header := container.NewVBox(container.NewCenter(deviceFace), container.NewCenter(capLbl), busyBar)
+	header := container.NewVBox(container.NewCenter(face.root), container.NewCenter(capLbl), busyBar)
 
 	// one choice list drives both the window buttons and the tray menu
 	type choice struct{ label, state string }
@@ -106,7 +99,7 @@ func main() {
 	customBtn := widget.NewButtonWithIcon("", dotResource("custom"), func() { showCustom(customEntry.Text) })
 	emojiBtn := widget.NewButtonWithIcon("",
 		fyne.NewStaticResource("smile.png", emoji.PNG("smile")),
-		func() { showEmojiPicker(a, agent, setBusy) })
+		func() { showEmojiPicker(a, agent, setBusy, func(name string) { lastEmoji = name }) })
 	customRow := container.NewBorder(nil, nil, nil, container.NewHBox(customBtn, emojiBtn), customEntry)
 
 	fwLbl := widget.NewLabel("Firmware: ...")
@@ -193,6 +186,7 @@ func main() {
 			for _, x := range widgets {
 				x.Enable()
 			}
+			w.Resize(fyne.NewSize(260, 0)) // the hidden bar leaves the window tall
 		}
 	}
 
@@ -201,22 +195,7 @@ func main() {
 	update = func() {
 		st := agent.Status()
 
-		key := stateKey(st.Shown)
-		fc := faceStyles[key]
-		face.FillColor = fc.fill
-		face.StrokeColor = fc.ring
-		face.Refresh()
-		name := title(key)
-		if key == "custom" {
-			name = strings.TrimPrefix(st.Shown, "custom:")
-		}
-		faceName.Text = name
-		faceName.Color = fc.text
-		faceName.TextSize = 22
-		if len(name) > 12 {
-			faceName.TextSize = 14
-		}
-		faceName.Refresh()
+		face.Set(st.Shown, lastEmoji)
 
 		src := "no presence source"
 		switch {
@@ -300,13 +279,25 @@ func main() {
 	for _, b := range btns[1:] { // 4 states, 2x2
 		grid.Add(b)
 	}
-	settings := widget.NewAccordion(widget.NewAccordionItem("Settings",
-		container.NewVBox(
-			fwLbl, fwBtn,
-			graphSetupBtn,
-			loginCheck,
-		),
-	))
+	// Not an Accordion: Fyne grows the fixed-size window when content
+	// expands but never shrinks it back, and Accordion offers no toggle
+	// hook - so a look-alike button that resizes the window on collapse.
+	settingsBody := container.NewVBox(fwLbl, fwBtn, graphSetupBtn, loginCheck)
+	settingsBody.Hide()
+	var settingsBtn *widget.Button
+	settingsBtn = widget.NewButtonWithIcon("Settings", theme.MenuDropDownIcon(), func() {
+		if settingsBody.Visible() {
+			settingsBody.Hide()
+			settingsBtn.SetIcon(theme.MenuDropDownIcon())
+			w.Resize(fyne.NewSize(260, 0)) // snap back to content height
+		} else {
+			settingsBody.Show()
+			settingsBtn.SetIcon(theme.MenuDropUpIcon())
+		}
+	})
+	settingsBtn.Alignment = widget.ButtonAlignLeading
+	settingsBtn.Importance = widget.LowImportance
+	settings := container.NewVBox(settingsBtn, settingsBody)
 	w.SetContent(container.NewVBox(
 		header,
 		widget.NewSeparator(),
@@ -337,14 +328,4 @@ func main() {
 	} else {
 		w.ShowAndRun()
 	}
-}
-
-// faceStyles drive the round device mirror per state.
-var faceStyles = map[string]struct{ fill, ring, text color.NRGBA }{
-	"available": {color.NRGBA{0x10, 0x10, 0x18, 0xFF}, stateColors["available"], color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
-	"meeting":   {stateColors["meeting"], color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
-	"sharing":   {stateColors["sharing"], color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
-	"custom":    {stateColors["custom"], color.NRGBA{0x10, 0x10, 0x18, 0xFF}, color.NRGBA{0x10, 0x10, 0x18, 0xFF}},
-	"emoji":     {color.NRGBA{0x10, 0x10, 0x18, 0xFF}, stateColors["emoji"], color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
-	"off":       {color.NRGBA{0x0A, 0x0A, 0x0E, 0xFF}, stateColors["off"], color.NRGBA{0xB0, 0xB0, 0xC0, 0xFF}},
 }

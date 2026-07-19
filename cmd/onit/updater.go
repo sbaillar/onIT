@@ -110,8 +110,12 @@ func checkForUpdates(w fyne.Window) {
 							dialog.ShowError(err, w)
 							return
 						}
-						dialog.ShowInformation("Installer opened",
-							"Finish the install, then launch onIT -\nthe new version stops this one automatically.", w)
+						relaunchWhenInstalled(ver)
+						msg := "Finish the install, then launch onIT -\nthe new version stops this one automatically."
+						if runtime.GOOS == "darwin" {
+							msg = "Finish the install - onIT switches to\nthe new version by itself when it's done."
+						}
+						dialog.ShowInformation("Installer opened", msg, w)
 					})
 				}()
 			}, w)
