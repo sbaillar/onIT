@@ -1,0 +1,37 @@
+package main
+
+import (
+	"log"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/widget"
+
+	"onit/internal/busylight"
+	"onit/internal/emoji"
+)
+
+// showEmojiPicker lets the user send one of the embedded emojis to the
+// device (transfer takes ~2s at 115200 baud).
+func showEmojiPicker(a fyne.App, agent *busylight.Agent) {
+	w := a.NewWindow("Send an emoji")
+	grid := container.NewGridWithColumns(4)
+	for _, n := range emoji.Names {
+		res := fyne.NewStaticResource(n+".png", emoji.PNG(n))
+		grid.Add(widget.NewButtonWithIcon("", res, func() {
+			w.Close()
+			go func() {
+				payload, err := emoji.RGB565Base64(n)
+				if err != nil {
+					log.Printf("emoji %s: %v", n, err)
+					return
+				}
+				if !agent.ShowEmoji(payload) {
+					log.Printf("emoji %s: device not connected", n)
+				}
+			}()
+		}))
+	}
+	w.SetContent(container.NewPadded(grid))
+	w.Show()
+}

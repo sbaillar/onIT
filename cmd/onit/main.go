@@ -98,7 +98,8 @@ func main() {
 	}
 	customEntry.OnSubmitted = showCustom
 	customBtn := widget.NewButtonWithIcon("", dotResource("custom"), func() { showCustom(customEntry.Text) })
-	customRow := container.NewBorder(nil, nil, nil, customBtn, customEntry)
+	emojiBtn := widget.NewButtonWithIcon("", dotResource("emoji"), func() { showEmojiPicker(a, agent) })
+	customRow := container.NewBorder(nil, nil, nil, container.NewHBox(customBtn, emojiBtn), customEntry)
 
 	fwLbl := widget.NewLabel("Firmware: ...")
 	fwLbl.Importance = widget.LowImportance
@@ -312,5 +313,6 @@ var faceStyles = map[string]struct{ fill, ring, text color.NRGBA }{
 	"meeting":   {stateColors["meeting"], color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
 	"sharing":   {stateColors["sharing"], color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
 	"custom":    {stateColors["custom"], color.NRGBA{0x10, 0x10, 0x18, 0xFF}, color.NRGBA{0x10, 0x10, 0x18, 0xFF}},
+	"emoji":     {color.NRGBA{0x10, 0x10, 0x18, 0xFF}, stateColors["emoji"], color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}},
 	"off":       {color.NRGBA{0x0A, 0x0A, 0x0E, 0xFF}, stateColors["off"], color.NRGBA{0xB0, 0xB0, 0xC0, 0xFF}},
 }

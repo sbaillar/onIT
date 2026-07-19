@@ -86,6 +86,19 @@ func (a *Agent) SetOverride(state string) {
 	a.wake()
 }
 
+// ShowEmoji sends a pre-encoded emoji payload (see internal/emoji) and
+// overrides the state to "emoji". Blocks during transfer; call from a
+// goroutine. The image is not resent on reconnect - pick again if the
+// device is replugged.
+func (a *Agent) ShowEmoji(payloadB64 string) bool {
+	a.mu.Lock()
+	a.override = "emoji"
+	a.mu.Unlock()
+	ok := a.light.SendLine("EMOJI:" + payloadB64)
+	a.wake()
+	return ok
+}
+
 func (a *Agent) setTeams(up bool, state string) {
 	a.mu.Lock()
 	changed := a.teamsUp != up || a.teamsState != state

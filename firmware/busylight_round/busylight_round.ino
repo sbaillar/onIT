@@ -7,6 +7,8 @@
  *
  * Serial in : STATE:available|meeting|sharing|flashing|off   @115200
  *             STATE:custom:<text>       (yellow screen, text auto-fitted)
+ *             EMOJI:<base64>            (100x100 RGB565 LE image; shown
+ *             immediately and kept alive by STATE:emoji heartbeats)
  *             VERSION                    (query firmware version)
  * Serial out: VERSION:x.y.z     (at boot and on VERSION query)
  * Watchdog  : no serial for 5s -> OFF/STALE (except FLASHING: sticky,
@@ -17,7 +19,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28 for your revision.
  */
 
-#define FW_VERSION "1.3.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.4.0"   // extracted by `make firmware`, embedded in onIT
 
 #include <Arduino_GFX_Library.h>
 #include <Adafruit_GFX.h>   // only for its Fonts/ include path
@@ -63,12 +65,14 @@ const uint16_t FLASH_LUT[8] = {
 Arduino_DataBus *bus = new Arduino_ESP32SPI(LCD_DC, LCD_CS, LCD_SCK, LCD_MOSI, LCD_MISO);
 Arduino_GFX *gfx = new Arduino_GC9A01(bus, LCD_RST, 0 /*rotation*/, true /*IPS*/);
 
-enum State { ST_OFF, ST_AVAILABLE, ST_MEETING, ST_SHARING, ST_FLASHING, ST_CUSTOM };
+enum State { ST_OFF, ST_AVAILABLE, ST_MEETING, ST_SHARING, ST_FLASHING, ST_CUSTOM, ST_EMOJI };
 State state = ST_OFF;
 
 unsigned long lastSerial   = 0;
 unsigned long lastStateChg = 0;
 String customText;
+uint16_t emojiBuf[100 * 100];
+bool emojiValid = false;
 String lineBuf;
 
 // ---------------------------------------------------------------- backlight
@@ -148,6 +152,36 @@ void drawSharing() {
   backlight(100);
 }
 
+// minimal base64 decoder (standard alphabet); returns bytes written
+int b64decode(const String &in, uint8_t *out, int maxOut) {
+  int n = 0, buf = 0, bits = 0;
+  for (unsigned int i = 0; i < in.length(); i++) {
+    char c = in[i];
+    int v = -1;
+    if (c >= 'A' && c <= 'Z') v = c - 'A';
+    else if (c >= 'a' && c <= 'z') v = c - 'a' + 26;
+    else if (c >= '0' && c <= '9') v = c - '0' + 52;
+    else if (c == '+') v = 62;
+    else if (c == '/') v = 63;
+    else if (c == '=') break;
+    else continue;
+    buf = (buf << 6) | v;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      if (n < maxOut) out[n++] = (buf >> bits) & 0xFF;
+    }
+  }
+  return n;
+}
+
+void drawEmoji() {
+  gfx->fillScreen(C_BG_IDLE);
+  if (emojiValid) gfx->draw16bitRGBBitmap(70, 70, emojiBuf, 100, 100);
+  else textCentered("?", 130, &FreeSansBold18pt7b, C_GRAY_TEXT);
+  backlight(70);
+}
+
 uint16_t textW(const char *s, const GFXfont *f) {
   int16_t x1, y1; uint16_t w, h;
   gfx->setFont(f);
@@ -210,6 +244,7 @@ void setState(State s) {
     case ST_SHARING:   drawSharing();   break;
     case ST_FLASHING:  drawFlashing();  break;
     case ST_CUSTOM:    drawCustom();    break;
+    case ST_EMOJI:     drawEmoji();     break;
     default:           drawOff();       break;
   }
 }
@@ -217,6 +252,15 @@ void setState(State s) {
 // ---------------------------------------------------------------- serial
 void handleLine(const String &line) {
   if (line == "VERSION") { Serial.print("VERSION:" FW_VERSION "\n"); return; }
+  if (line.startsWith("EMOJI:")) {
+    lastSerial = millis();
+    int n = b64decode(line.substring(6), (uint8_t *)emojiBuf, sizeof(emojiBuf));
+    emojiValid = (n == (int)sizeof(emojiBuf));
+    state = ST_EMOJI;
+    lastStateChg = millis();
+    drawEmoji();
+    return;
+  }
   if (!line.startsWith("STATE:")) return;
   lastSerial = millis();
   String s = line.substring(6); s.trim();
@@ -234,11 +278,13 @@ void handleLine(const String &line) {
   else if (s == "meeting")   setState(ST_MEETING);
   else if (s == "sharing")   setState(ST_SHARING);
   else if (s == "flashing")  setState(ST_FLASHING);
+  else if (s == "emoji")     setState(ST_EMOJI);
   else                       setState(ST_OFF);
 }
 
 // ---------------------------------------------------------------- setup/loop
 void setup() {
+  Serial.setRxBufferSize(4096);   // EMOJI payloads burst ~27 KB
   Serial.begin(115200);
   ledcAttach(LCD_BL, 5000, 8);
   gfx->begin();

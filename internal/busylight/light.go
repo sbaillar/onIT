@@ -150,6 +150,23 @@ func (l *Light) Send(state string) {
 	}
 }
 
+// SendLine writes an arbitrary protocol line (e.g. an EMOJI payload).
+// Blocks until transmitted; large payloads take a couple of seconds.
+func (l *Light) SendLine(line string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.ensureLocked() {
+		return false
+	}
+	if _, err := l.port.Write([]byte(line + "\n")); err != nil {
+		l.port.Close()
+		l.port = nil
+		l.connected.Store(false)
+		return false
+	}
+	return true
+}
+
 // Connected reports whether a serial port is currently open (lock-free,
 // safe to call from UI threads while a reconnect is in progress).
 func (l *Light) Connected() bool {
