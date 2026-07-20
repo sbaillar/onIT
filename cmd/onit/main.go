@@ -13,6 +13,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -155,8 +156,6 @@ func main() {
 
 	menuItems = append(menuItems,
 		fyne.NewMenuItemSeparator(),
-		fyne.NewMenuItem("Check for updates...", func() { w.Show(); checkForUpdates(w) }),
-		fyne.NewMenuItem("About onIT...", func() { showAbout(a) }),
 		fyne.NewMenuItem("Uninstall onIT...", doUninstall),
 	)
 	trayMenu := fyne.NewMenu("onIT", menuItems...)
@@ -298,14 +297,31 @@ func main() {
 	settingsBtn.Alignment = widget.ButtonAlignLeading
 	settingsBtn.Importance = widget.LowImportance
 	settings := container.NewVBox(settingsBtn, settingsBody)
-	w.SetContent(container.NewVBox(
-		header,
-		widget.NewSeparator(),
-		btns[0], // Auto (Teams)
-		grid,
-		customRow,
-		widget.NewSeparator(),
-		settings,
+	// help menu in the top-left corner (an LSUIElement app has no menu bar)
+	helpMenu := fyne.NewMenu("",
+		fyne.NewMenuItem("Check for updates...", func() { checkForUpdates(w) }),
+		fyne.NewMenuItem("About onIT...", func() { showAbout(a) }),
+	)
+	var helpBtn *widget.Button
+	helpBtn = widget.NewButtonWithIcon("", theme.HelpIcon(), func() {
+		pos := a.Driver().AbsolutePositionForObject(helpBtn)
+		widget.ShowPopUpMenuAtPosition(helpMenu, w.Canvas(),
+			pos.Add(fyne.NewPos(0, helpBtn.Size().Height)))
+	})
+	helpBtn.Importance = widget.LowImportance
+
+	w.SetContent(container.NewStack(
+		container.NewVBox(
+			header,
+			widget.NewSeparator(),
+			btns[0], // Auto (Teams)
+			grid,
+			customRow,
+			widget.NewSeparator(),
+			settings,
+		),
+		container.NewBorder( // floats over the face's empty corner
+			container.NewHBox(helpBtn, layout.NewSpacer()), nil, nil, nil, nil),
 	))
 
 	w.Resize(fyne.NewSize(260, 0)) // height from content; keep it compact
