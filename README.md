@@ -54,6 +54,25 @@ returns to Auto on restart.
 | sharing | presenting or do-not-disturb | purple, pulsing ring, "Do not disturb" |
 | off | offline / no presence source for 5 s | near-black dotted ring |
 
+## Remote presence (Conditional Access workaround)
+
+If your org requires a managed device for sign-in (error 53003, "device
+state: Unregistered"), sign in on a machine that *is* managed and relay
+presence to the one with the light:
+
+1. On the light machine: **Settings → Accept remote presence** (opens
+   port 8125).
+2. On the managed machine, with `onitctl` from the release zip/pkg:
+
+   ```
+   onitctl -login                                  # browser sign-in, once
+   onitctl -forward http://<light-machine>:8125    # keep running
+   ```
+
+The light machine shows the relayed presence within seconds and falls back
+to its own sources if the pushes stop. Pass `-client`/`-tenant` to
+`onitctl -login` if you use your own app registration.
+
 ## Windows
 
 Download the latest **onIT-<version>-windows-amd64.zip** from the [latest release](../../releases),

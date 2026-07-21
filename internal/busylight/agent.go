@@ -31,10 +31,12 @@ type Agent struct {
 	kick     chan struct{} // wakes the push goroutine after a state change
 	flashing atomic.Bool   // suspends serial pushes while esptool owns the port
 
-	mu         sync.Mutex
-	teamsUp    bool
-	teamsState string // last state derived from Teams; "off" while disconnected
-	source     string // active presence source: "graph", "teams", ""
+	mu          sync.Mutex
+	teamsUp     bool
+	teamsState  string // last state derived from Teams; "off" while disconnected
+	source      string // active presence source: "remote", "graph", "teams", ""
+	remoteState string // last state pushed by a remote agent (see remote.go)
+	remoteAt    time.Time
 	override   string // "" = auto
 	last       Status // last status delivered to onChange
 	onChange   func()
@@ -189,7 +191,10 @@ func (a *Agent) Run() {
 	}()
 	for {
 		var err error
-		if a.Graph.SignedIn() {
+		if a.remoteFresh() {
+			a.setSource("remote")
+			err = a.remoteSession()
+		} else if a.Graph.SignedIn() {
 			a.setSource("graph")
 			err = a.graphSession()
 		} else {

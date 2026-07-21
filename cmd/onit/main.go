@@ -24,6 +24,9 @@ import (
 
 const autoLabel = "Auto (Teams)"
 
+// remoteAddr is where onIT listens for presence pushed by `onitctl -forward`.
+const remoteAddr = ":8125"
+
 func title(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
@@ -280,10 +283,34 @@ func main() {
 	for _, b := range btns[1:] { // 4 states, 2x2
 		grid.Add(b)
 	}
+	// Remote presence: accept pushes from `onitctl -forward` on another
+	// machine (e.g. an org-managed one that can sign in to Graph).
+	var remoteSrv *busylight.RemoteServer
+	if a.Preferences().Bool("remoteListen") {
+		var err error
+		if remoteSrv, err = agent.ListenRemote(remoteAddr); err != nil {
+			log.Printf("remote listener: %v", err)
+		}
+	}
+	remoteCheck := widget.NewCheck("Accept remote presence (port 8125)", func(on bool) {
+		a.Preferences().SetBool("remoteListen", on)
+		if on && remoteSrv == nil {
+			var err error
+			if remoteSrv, err = agent.ListenRemote(remoteAddr); err != nil {
+				dialog.ShowError(err, w)
+				remoteSrv = nil
+			}
+		} else if !on && remoteSrv != nil {
+			remoteSrv.Close()
+			remoteSrv = nil
+		}
+	})
+	remoteCheck.SetChecked(remoteSrv != nil)
+
 	// Not an Accordion: Fyne grows the fixed-size window when content
 	// expands but never shrinks it back, and Accordion offers no toggle
 	// hook - so a look-alike button that resizes the window on collapse.
-	settingsBody := container.NewVBox(fwLbl, fwBtn, graphSetupBtn, loginCheck)
+	settingsBody := container.NewVBox(fwLbl, fwBtn, graphSetupBtn, remoteCheck, loginCheck)
 	settingsBody.Hide()
 	var settingsBtn *widget.Button
 	settingsBtn = widget.NewButtonWithIcon("Settings", theme.MenuDropDownIcon(), func() {
