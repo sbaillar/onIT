@@ -8,7 +8,6 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
-
 )
 
 // The round face replicates the firmware's 240x240 screen layouts
@@ -29,23 +28,23 @@ var (
 
 // Icons traced from the firmware's iconMic/iconShare (24x24 grid, scale 2).
 var micIcon = fyne.NewStaticResource("mic.svg", []byte(
-	`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">` +
-		`<rect x="18" y="6" width="12" height="22" rx="6" fill="#FFFFFF"/>` +
-		`<path d="M12 22 A12 12 0 0 0 36 22" stroke="#FFFFFF" stroke-width="2" fill="none"/>` +
-		`<rect x="23" y="34" width="3" height="8" fill="#FFFFFF"/>` +
+	`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">`+
+		`<rect x="18" y="6" width="12" height="22" rx="6" fill="#FFFFFF"/>`+
+		`<path d="M12 22 A12 12 0 0 0 36 22" stroke="#FFFFFF" stroke-width="2" fill="none"/>`+
+		`<rect x="23" y="34" width="3" height="8" fill="#FFFFFF"/>`+
 		`</svg>`))
 
 var shareIcon = fyne.NewStaticResource("share.svg", []byte(
-	`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 46 46">` +
-		`<rect x="4" y="7.6" width="38" height="24.7" rx="2" stroke="#FFFFFF" stroke-width="2" fill="none"/>` +
-		`<path d="M23 24.7 L23 17.1 M23 17.1 L18.2 21.9 M23 17.1 L27.8 21.9" stroke="#FFFFFF" stroke-width="3" fill="none"/>` +
-		`<rect x="15.2" y="38" width="15.2" height="2" fill="#FFFFFF"/>` +
+	`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 46 46">`+
+		`<rect x="4" y="7.6" width="38" height="24.7" rx="2" stroke="#FFFFFF" stroke-width="2" fill="none"/>`+
+		`<path d="M23 24.7 L23 17.1 M23 17.1 L18.2 21.9 M23 17.1 L27.8 21.9" stroke="#FFFFFF" stroke-width="3" fill="none"/>`+
+		`<rect x="15.2" y="38" width="15.2" height="2" fill="#FFFFFF"/>`+
 		`</svg>`))
 
 // 48 dashes of 3.5deg, like ringDashed(114, 3, C_GRAY_RING, 48, 3.5).
 var dashRing = fyne.NewStaticResource("dashring.svg", []byte(
-	`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240">` +
-		`<circle cx="120" cy="120" r="112.5" stroke="#404040" stroke-width="3" fill="none" stroke-dasharray="6.87 7.85"/>` +
+	`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240">`+
+		`<circle cx="120" cy="120" r="112.5" stroke="#404040" stroke-width="3" fill="none" stroke-dasharray="6.87 7.85"/>`+
 		`</svg>`))
 
 type deviceFace struct {

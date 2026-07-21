@@ -113,7 +113,7 @@ func TextPayload(text string) (b64 string, pngBytes []byte, err error) {
 			Face: fc,
 			Dot: fixed.Point26_6{
 				X: fixed.Int26_6((float64(Size) - width) / 2 * 64),
-				Y: fixed.Int26_6((top + lineH*float64(i)) * 64) + m.Ascent,
+				Y: fixed.Int26_6((top+lineH*float64(i))*64) + m.Ascent,
 			},
 		}
 		d.DrawString(line)

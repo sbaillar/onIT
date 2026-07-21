@@ -10,7 +10,7 @@ func TestNotoFile(t *testing.T) {
 	cases := []struct{ codepoint, want string }{
 		{"1F600", "emoji_u1f600.png"},
 		{"1F44D 1F3FB", "emoji_u1f44d_1f3fb.png"},
-		{"2764 FE0F", "emoji_u2764.png"},                          // FE0F dropped
+		{"2764 FE0F", "emoji_u2764.png"}, // FE0F dropped
 		{"1F468 200D 1F469 200D 1F467", "emoji_u1f468_200d_1f469_200d_1f467.png"},
 	}
 	for _, c := range cases {

@@ -37,9 +37,9 @@ type Agent struct {
 	source      string // active presence source: "remote", "graph", "teams", ""
 	remoteState string // last state pushed by a remote agent (see remote.go)
 	remoteAt    time.Time
-	override   string // "" = auto
-	last       Status // last status delivered to onChange
-	onChange   func()
+	override    string // "" = auto
+	last        Status // last status delivered to onChange
+	onChange    func()
 }
 
 func NewAgent() *Agent {
