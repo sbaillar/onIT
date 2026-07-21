@@ -27,7 +27,14 @@ const autoLabel = "Auto (Teams)"
 // remoteAddr is where onIT listens for presence pushed by `onitctl -forward`.
 const remoteAddr = ":8125"
 
-func title(s string) string {
+// stateLabel names a state in the UI, matching the device's own wording.
+func stateLabel(s string) string {
+	switch s {
+	case "meeting":
+		return "In a call"
+	case "sharing":
+		return "Presenting"
+	}
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
@@ -72,7 +79,7 @@ func main() {
 	type choice struct{ label, state string }
 	choices := []choice{{autoLabel, ""}}
 	for _, s := range busylight.States {
-		choices = append(choices, choice{title(s), s})
+		choices = append(choices, choice{stateLabel(s), s})
 	}
 	btns := make([]*widget.Button, len(choices))
 	stateItems := make([]*fyne.MenuItem, len(choices))
