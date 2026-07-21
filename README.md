@@ -61,17 +61,20 @@ state: Unregistered"), sign in on a machine that *is* managed and relay
 presence to the one with the light:
 
 1. On the light machine: **Settings → Accept remote presence** (opens
-   port 8125).
+   port 8125). A dialog shows the exact command for step 2, including a
+   shared token that authenticates the pushes.
 2. On the managed machine, with `onitctl` from the release zip/pkg:
 
    ```
-   onitctl -login                                  # browser sign-in, once
-   onitctl -forward http://<light-machine>:8125    # keep running
+   onitctl -login                                             # browser sign-in, once
+   onitctl -forward http://<light-machine>:8125 -token <tok>  # keep running
    ```
 
 The light machine shows the relayed presence within seconds and falls back
 to its own sources if the pushes stop. Pass `-client`/`-tenant` to
-`onitctl -login` if you use your own app registration.
+`onitctl -login` if you use your own app registration. The relay is plain
+HTTP carrying a one-word state; the token gates writes — use it on
+networks you trust.
 
 ## Windows
 

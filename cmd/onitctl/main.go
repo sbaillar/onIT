@@ -28,7 +28,8 @@ func main() {
 	login := flag.Bool("login", false, "sign in to Microsoft Graph in the browser and exit")
 	client := flag.String("client", "", "app registration client ID (default: built-in shared registration)")
 	tenant := flag.String("tenant", "", "Entra tenant ID (default: organizations)")
-	forward := flag.String("forward", "", "push presence to a remote onIT instead of driving a local light (e.g. http://hammer-mini:8125)")
+	forward := flag.String("forward", "", "push presence to a remote onIT instead of driving a local light (e.g. http://hammer-mini:8125; plain HTTP - trusted networks only)")
+	token := flag.String("token", "", "shared token for -forward (shown when the receiver enables remote presence)")
 	listen := flag.String("listen", "", "also accept remote presence pushes on this address (e.g. :8125)")
 	flag.Parse()
 
@@ -55,9 +56,12 @@ func main() {
 		fmt.Println("Signed in. Run onitctl -forward http://<onit-host>:8125 to relay presence.")
 
 	case *forward != "":
+		if *token == "" {
+			log.Fatal("-forward needs -token (shown when the receiver enables remote presence)")
+		}
 		g := busylight.LoadGraph()
 		for {
-			err := g.ForwardPresence(*forward)
+			err := g.ForwardPresence(*forward, *token)
 			log.Printf("forward down (%v), retrying", err)
 			time.Sleep(5 * time.Second)
 		}
@@ -65,10 +69,11 @@ func main() {
 	default:
 		agent := busylight.NewAgent()
 		if *listen != "" {
-			if _, err := agent.ListenRemote(*listen); err != nil {
+			rs, err := agent.ListenRemote(*listen)
+			if err != nil {
 				log.Fatal(err)
 			}
-			log.Printf("accepting remote presence on %s", *listen)
+			log.Printf("accepting remote presence on %s (token: %s)", *listen, rs.Token())
 		}
 		agent.Run()
 	}

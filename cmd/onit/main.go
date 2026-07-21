@@ -299,7 +299,18 @@ func main() {
 			if remoteSrv, err = agent.ListenRemote(remoteAddr); err != nil {
 				dialog.ShowError(err, w)
 				remoteSrv = nil
+				return
 			}
+			host, _ := os.Hostname()
+			cmd := fmt.Sprintf("onitctl -forward http://%s:8125 -token %s",
+				host, remoteSrv.Token())
+			cmdEntry := widget.NewEntry() // selectable, so the token can be copied
+			cmdEntry.SetText(cmd)
+			dialog.ShowCustom("Remote presence enabled", "Close", container.NewVBox(
+				widget.NewLabel("On the machine that can sign in to Microsoft, run:"),
+				cmdEntry,
+				widget.NewButton("Copy command", func() { a.Clipboard().SetContent(cmd) }),
+			), w)
 		} else if !on && remoteSrv != nil {
 			remoteSrv.Close()
 			remoteSrv = nil

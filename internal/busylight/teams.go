@@ -44,9 +44,10 @@ func loadToken() string {
 	return strings.TrimSpace(string(b))
 }
 
-// RemoveToken deletes stored credentials — the Teams pairing token and the
-// Microsoft Graph refresh token (uninstall cleanup).
+// RemoveToken deletes stored credentials — the Teams pairing token, the
+// Microsoft Graph refresh token, and the remote-relay token (uninstall cleanup).
 func RemoveToken() error {
+	os.Remove(remoteTokenFile())
 	gerr := os.Remove(graphTokenFile())
 	err := os.Remove(tokenFile())
 	if err == nil && gerr != nil && !os.IsNotExist(gerr) {

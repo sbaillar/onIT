@@ -9,10 +9,10 @@ import (
 
 func TestRemoteHandlerAcceptsStateAndRejectsJunk(t *testing.T) {
 	a := NewAgent()
-	srv := httptest.NewServer(a.RemoteHandler())
+	srv := httptest.NewServer(a.RemoteHandler("sekrit"))
 	defer srv.Close()
 
-	if err := PushState(srv.URL, "meeting"); err != nil {
+	if err := PushState(srv.URL, "sekrit", "meeting"); err != nil {
 		t.Fatal(err)
 	}
 	a.mu.Lock()
@@ -25,7 +25,7 @@ func TestRemoteHandlerAcceptsStateAndRejectsJunk(t *testing.T) {
 		t.Error("remoteAt not stamped")
 	}
 
-	if err := PushState(srv.URL, "purple"); err == nil {
+	if err := PushState(srv.URL, "sekrit", "purple"); err == nil {
 		t.Error("PushState accepted an unknown state")
 	}
 	resp, err := srv.Client().Get(srv.URL + "/presence")
@@ -38,15 +38,41 @@ func TestRemoteHandlerAcceptsStateAndRejectsJunk(t *testing.T) {
 	}
 }
 
+func TestRemoteHandlerRequiresToken(t *testing.T) {
+	a := NewAgent()
+	srv := httptest.NewServer(a.RemoteHandler("sekrit"))
+	defer srv.Close()
+
+	// wrong and missing tokens are rejected without touching state
+	if err := PushState(srv.URL, "wrong", "meeting"); err == nil {
+		t.Error("PushState succeeded with a wrong token")
+	}
+	resp, err := srv.Client().Post(srv.URL+"/presence", "text/plain",
+		strings.NewReader("meeting")) // plain CSRF-style POST, no header
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 401 {
+		t.Errorf("tokenless POST = %d, want 401", resp.StatusCode)
+	}
+	a.mu.Lock()
+	state := a.remoteState
+	a.mu.Unlock()
+	if state != "" {
+		t.Errorf("remoteState = %q after rejected pushes, want empty", state)
+	}
+}
+
 func TestRemoteSessionFollowsPushesThenGoesStale(t *testing.T) {
 	oldStale, oldTick := remoteStale, remoteTick
 	remoteStale, remoteTick = 80*time.Millisecond, 10*time.Millisecond
 	defer func() { remoteStale, remoteTick = oldStale, oldTick }()
 
 	a := NewAgent()
-	srv := httptest.NewServer(a.RemoteHandler())
+	srv := httptest.NewServer(a.RemoteHandler("sekrit"))
 	defer srv.Close()
-	if err := PushState(srv.URL, "sharing"); err != nil {
+	if err := PushState(srv.URL, "sekrit", "sharing"); err != nil {
 		t.Fatal(err)
 	}
 	if !a.remoteFresh() {
@@ -80,12 +106,16 @@ func TestRemoteSessionFollowsPushesThenGoesStale(t *testing.T) {
 }
 
 func TestListenRemote(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // token file lives in $HOME
 	a := NewAgent()
 	rs, err := a.ListenRemote("127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := PushState("http://"+rs.Addr(), "available"); err != nil {
+	if rs.Token() == "" {
+		t.Fatal("ListenRemote generated no token")
+	}
+	if err := PushState("http://"+rs.Addr(), rs.Token(), "available"); err != nil {
 		t.Fatal(err)
 	}
 	a.mu.Lock()
@@ -94,8 +124,19 @@ func TestListenRemote(t *testing.T) {
 	if state != "available" {
 		t.Errorf("remoteState = %q, want available", state)
 	}
+
+	// the token persists, so sender config survives receiver restarts
+	rs2, err := a.ListenRemote("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs2.Token() != rs.Token() {
+		t.Error("token changed between listeners")
+	}
+	rs2.Close()
+
 	rs.Close()
-	if err := PushState("http://"+rs.Addr(), "off"); err == nil {
+	if err := PushState("http://"+rs.Addr(), rs.Token(), "off"); err == nil {
 		t.Error("PushState succeeded after Close")
 	}
 }
