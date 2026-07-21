@@ -14,6 +14,26 @@ import (
 	"onit/internal/emoji"
 )
 
+// cannedTexts populate the message box's drop-down.
+var cannedTexts = []string{
+	"Back in 5", "Be right back", "On lunch",
+	"In a meeting", "Do not disturb", "Come on in",
+}
+
+const textHistoryKey = "textHistory"
+
+// pushHistory prepends text to the sent-message history: newest first,
+// no duplicates, capped at 3.
+func pushHistory(h []string, text string) []string {
+	out := []string{text}
+	for _, t := range h {
+		if t != text && len(out) < 3 {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // showEmojiPicker lets the user send one of the embedded emojis — or a short
 // text, auto-fitted to the round display — to the device (transfer takes ~2s
 // at 115200 baud). onPick reports the sent image so the window face can
@@ -46,7 +66,7 @@ func showEmojiPicker(a fyne.App, agent *busylight.Agent, setBusy func(bool), onP
 		}))
 	}
 
-	entry := widget.NewEntry()
+	entry := widget.NewSelectEntry(cannedTexts)
 	entry.SetPlaceHolder("or type a message...")
 	sendText := func(text string) {
 		payload, png, err := emoji.TextPayload(text)
@@ -54,6 +74,8 @@ func showEmojiPicker(a fyne.App, agent *busylight.Agent, setBusy func(bool), onP
 			dialog.ShowError(err, w)
 			return
 		}
+		prefs := a.Preferences()
+		prefs.SetStringList(textHistoryKey, pushHistory(prefs.StringList(textHistoryKey), text))
 		name := fmt.Sprintf("text-%08x.png", crc32.ChecksumIEEE(png))
 		send(fyne.NewStaticResource(name, png), payload)
 	}
@@ -61,6 +83,15 @@ func showEmojiPicker(a fyne.App, agent *busylight.Agent, setBusy func(bool), onP
 	textRow := container.NewBorder(nil, nil, nil,
 		widget.NewButton("Send", func() { sendText(entry.Text) }), entry)
 
-	w.SetContent(container.NewPadded(container.NewVBox(grid, textRow)))
+	// the last messages sent, newest first, one click to resend
+	history := container.NewVBox()
+	for _, t := range a.Preferences().StringList(textHistoryKey) {
+		b := widget.NewButton(t, func() { sendText(t) })
+		b.Alignment = widget.ButtonAlignLeading
+		b.Importance = widget.LowImportance
+		history.Add(b)
+	}
+
+	w.SetContent(container.NewPadded(container.NewVBox(grid, history, textRow)))
 	w.Show()
 }
