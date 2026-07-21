@@ -155,7 +155,16 @@ func main() {
 		refreshOptions(customEntry)
 		pinBtn.SetIcon(pinIcon())
 	})
-	customEntry.OnChanged = func(string) { pinBtn.SetIcon(pinIcon()) }
+	// picking a drop-down option (or typing one out exactly) applies it
+	// immediately - no extra click needed
+	customEntry.OnChanged = func(s string) {
+		pinBtn.SetIcon(pinIcon())
+		s = strings.TrimSpace(s)
+		if s != "" && slices.Contains(
+			customOptions(prefs.StringList(textHistoryKey), prefs.StringList(pinnedTextsKey)), s) {
+			showCustom(s)
+		}
+	}
 
 	customBtn := widget.NewButtonWithIcon("", dotResource("custom"), func() { showCustom(customEntry.Text) })
 	emojiBtn := widget.NewButtonWithIcon("",
