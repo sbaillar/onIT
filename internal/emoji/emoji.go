@@ -49,6 +49,11 @@ func RGB565Base64(name string) (string, error) {
 	if img.Bounds().Dx() != Size || img.Bounds().Dy() != Size {
 		return "", fmt.Errorf("emoji %s is %v, want %dx%d", name, img.Bounds().Size(), Size, Size)
 	}
+	return rgb565Base64(img), nil
+}
+
+// rgb565Base64 converts a Size x Size image to the EMOJI: wire encoding.
+func rgb565Base64(img image.Image) string {
 	raw := make([]byte, 0, Size*Size*2)
 	var px [2]byte
 	for y := 0; y < Size; y++ {
@@ -59,5 +64,5 @@ func RGB565Base64(name string) (string, error) {
 			raw = append(raw, px[0], px[1])
 		}
 	}
-	return base64.StdEncoding.EncodeToString(raw), nil
+	return base64.StdEncoding.EncodeToString(raw)
 }

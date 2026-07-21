@@ -8,7 +8,6 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 
-	"onit/internal/emoji"
 )
 
 // The round face replicates the firmware's 240x240 screen layouts
@@ -108,9 +107,9 @@ func (f *deviceFace) setText(t *canvas.Text, s string, size float32, c color.Col
 	t.Refresh()
 }
 
-// Set renders the screen the firmware draws for shown; emojiName is the
-// emoji last sent to the device (the wire payload has no name).
-func (f *deviceFace) Set(shown, emojiName string) {
+// Set renders the screen the firmware draws for shown; emojiRes is the
+// emoji or text image last sent to the device (the wire payload has no name).
+func (f *deviceFace) Set(shown string, emojiRes fyne.Resource) {
 	for _, o := range []fyne.CanvasObject{f.dash, f.dot, f.mic, f.share, f.emoji, f.line1, f.line2} {
 		o.Hide()
 	}
@@ -133,8 +132,8 @@ func (f *deviceFace) Set(shown, emojiName string) {
 		f.setCustom(strings.TrimPrefix(shown, "custom:"))
 	case "emoji":
 		f.fill(faceBgIdle, faceBgIdle, 0)
-		if png := emoji.PNG(emojiName); png != nil {
-			f.emoji.Resource = fyne.NewStaticResource(emojiName+".png", png)
+		if emojiRes != nil {
+			f.emoji.Resource = emojiRes
 			f.emoji.Show()
 			f.emoji.Refresh()
 		} else {

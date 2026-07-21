@@ -10,9 +10,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/driver/software"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
+
+	"onit/internal/emoji"
 )
 
 var captureDir = flag.String("capture", "", "directory to write face captures")
@@ -33,7 +36,7 @@ func TestCaptureFaces(t *testing.T) {
 	}
 	for name, shown := range states {
 		f := newDeviceFace()
-		f.Set(shown, "heart")
+		f.Set(shown, fyne.NewStaticResource("heart.png", emoji.PNG("heart")))
 		img := software.Render(f.root, onitTheme{base: theme.DefaultTheme()})
 		out, err := os.Create(filepath.Join(*captureDir, name+".png"))
 		if err != nil {

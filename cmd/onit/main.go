@@ -60,7 +60,7 @@ func main() {
 
 	// the window mirrors the device: the face redraws the firmware screens
 	face := newDeviceFace()
-	lastEmoji := "" // name of the emoji last sent, for the face
+	var lastEmoji fyne.Resource // image last sent to the device, for the face
 	capLbl := widget.NewLabel("starting...")
 	capLbl.Importance = widget.LowImportance
 	busyBar := widget.NewProgressBarInfinite()
@@ -103,7 +103,7 @@ func main() {
 	customBtn := widget.NewButtonWithIcon("", dotResource("custom"), func() { showCustom(customEntry.Text) })
 	emojiBtn := widget.NewButtonWithIcon("",
 		fyne.NewStaticResource("smile.png", emoji.PNG("smile")),
-		func() { showEmojiPicker(a, agent, setBusy, func(name string) { lastEmoji = name }) })
+		func() { showEmojiPicker(a, agent, setBusy, func(res fyne.Resource) { lastEmoji = res }) })
 	customRow := container.NewBorder(nil, nil, nil, container.NewHBox(customBtn, emojiBtn), customEntry)
 
 	fwLbl := widget.NewLabel("Firmware: ...")
