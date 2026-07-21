@@ -27,6 +27,28 @@ func TestPushHistory(t *testing.T) {
 	}
 }
 
+func TestUsageTracking(t *testing.T) {
+	var u []string
+	for i := 0; i < 3; i++ {
+		u = bumpUsage(u, "fire")
+	}
+	u = bumpUsage(u, "pizza")
+	u = bumpUsage(u, "pizza")
+	u = bumpUsage(u, "cat")
+
+	if got := topUsed(u, 2); !slices.Equal(got, []string{"fire", "pizza"}) {
+		t.Fatalf("topUsed(2) = %q, want [fire pizza]", got)
+	}
+	// n larger than distinct slugs: all of them, most used first
+	if got := topUsed(u, 10); !slices.Equal(got, []string{"fire", "pizza", "cat"}) {
+		t.Fatalf("topUsed(10) = %q, want [fire pizza cat]", got)
+	}
+	// malformed entries are ignored
+	if got := topUsed(append(u, "garbage"), 1); !slices.Equal(got, []string{"fire"}) {
+		t.Fatalf("topUsed with garbage = %q, want [fire]", got)
+	}
+}
+
 func TestCustomOptions(t *testing.T) {
 	// no history: just the canned list
 	if got := customOptions(nil); !slices.Equal(got, cannedTexts) {
