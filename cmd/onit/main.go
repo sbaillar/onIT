@@ -156,6 +156,8 @@ func main() {
 
 	menuItems = append(menuItems,
 		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("Check for updates...", func() { w.Show(); checkForUpdates(w) }),
+		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Uninstall onIT...", doUninstall),
 	)
 	trayMenu := fyne.NewMenu("onIT", menuItems...)
