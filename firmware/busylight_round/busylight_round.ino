@@ -20,7 +20,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28 for your revision.
  */
 
-#define FW_VERSION "1.5.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.6.0"   // extracted by `make firmware`, embedded in onIT
 
 #include <Arduino_GFX_Library.h>
 #include <Adafruit_GFX.h>   // only for its Fonts/ include path
@@ -204,30 +204,71 @@ uint16_t textW(const char *s, const GFXfont *f) {
   return w;
 }
 
-// custom message: yellow face, text auto-fitted (shrink, then wrap to 2 lines)
+// ---- custom message: yellow face, biggest font that fits the circle,
+//      word-wrapped to the chord width available at each line
+
+#define CUSTOM_RADIUS    100  // usable radius inside the ring
+#define CUSTOM_MAX_LINES 5
+#define CUSTOM_MAX_WORDS 24
+
+// horizontal space available to a text band [yTop, yBot]
+uint16_t chordW(float yTop, float yBot) {
+  float d = max(max(yTop - 120, 120 - yTop), max(yBot - 120, 120 - yBot));
+  if (d >= CUSTOM_RADIUS) return 0;
+  return (uint16_t)(2 * sqrtf((float)CUSTOM_RADIUS * CUSTOM_RADIUS - d * d));
+}
+
+// wrap words into at most n vertically-centered lines; false if they don't fit
+bool customLayout(String *words, int wc, const GFXfont *f, float lineH, int n, String *out) {
+  float top = 120 - lineH * n / 2;
+  int wi = 0;
+  for (int i = 0; i < n && wi < wc; i++) {
+    uint16_t maxW = chordW(top + lineH * i, top + lineH * (i + 1));
+    String line = "";
+    while (wi < wc) {
+      String cand = line.length() ? line + " " + words[wi] : words[wi];
+      if (textW(cand.c_str(), f) > maxW) break;
+      line = cand;
+      wi++;
+    }
+    if (!line.length()) return false;  // a single word exceeds this line
+    out[i] = line;
+  }
+  return wi == wc;
+}
+
 void drawCustom() {
   gfx->fillScreen(C_YELLOW);
   ringSolid(114, 5, C_BLACK);
   backlight(100);
-  const GFXfont *fonts[3] = {&FreeSansBold18pt7b, &FreeSansBold12pt7b, &FreeSansBold9pt7b};
-  const uint16_t maxW = 180;
-  for (int i = 0; i < 3; i++) {
-    if (textW(customText.c_str(), fonts[i]) <= maxW) {
-      textCentered(customText.c_str(), 120, fonts[i], C_BLACK);
-      return;
+
+  String words[CUSTOM_MAX_WORDS];
+  int wc = 0;
+  for (unsigned int i = 0; i < customText.length(); i++) {
+    char ch = customText[i];
+    if (ch == ' ') {
+      if (words[wc].length() && wc < CUSTOM_MAX_WORDS - 1) wc++;
+    } else {
+      words[wc] += ch;
     }
   }
-  int best = -1, mid = customText.length() / 2;
-  for (int i = 0; i < (int)customText.length(); i++)
-    if (customText[i] == ' ' && (best < 0 || abs(i - mid) < abs(best - mid))) best = i;
-  if (best > 0) {
-    String a = customText.substring(0, best), b = customText.substring(best + 1);
-    for (int i = 1; i < 3; i++) {
-      if (textW(a.c_str(), fonts[i]) <= maxW && textW(b.c_str(), fonts[i]) <= maxW) {
-        textCentered(a.c_str(), 96, fonts[i], C_BLACK);
-        textCentered(b.c_str(), 144, fonts[i], C_BLACK);
-        return;
-      }
+  if (words[wc].length()) wc++;
+  if (!wc) return;
+
+  const GFXfont *fonts[3] = {&FreeSansBold18pt7b, &FreeSansBold12pt7b, &FreeSansBold9pt7b};
+  for (int fi = 0; fi < 3; fi++) {
+    int16_t x1, y1; uint16_t w, h;
+    gfx->setFont(fonts[fi]);
+    gfx->getTextBounds("Agy", 0, 0, &x1, &y1, &w, &h);
+    float lineH = h * 1.15f;
+    int maxLines = min(CUSTOM_MAX_LINES, (int)(2 * CUSTOM_RADIUS / lineH));
+    for (int n = 1; n <= maxLines; n++) {
+      String lines[CUSTOM_MAX_LINES];
+      if (!customLayout(words, wc, fonts[fi], lineH, n, lines)) continue;
+      float top = 120 - lineH * n / 2;
+      for (int i = 0; i < n; i++)
+        textCentered(lines[i].c_str(), (int16_t)(top + lineH * (i + 0.5f)), fonts[fi], C_BLACK);
+      return;
     }
   }
   textCentered(customText.c_str(), 120, fonts[2], C_BLACK); // best effort

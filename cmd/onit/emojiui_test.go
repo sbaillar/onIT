@@ -50,15 +50,15 @@ func TestUsageTracking(t *testing.T) {
 }
 
 func TestCustomOptions(t *testing.T) {
-	// no history: just the canned list
-	if got := customOptions(nil); !slices.Equal(got, cannedTexts) {
-		t.Fatalf("customOptions(nil) = %q, want canned list", got)
+	// no history, no pins: just the canned list
+	if got := customOptions(nil, nil); !slices.Equal(got, cannedTexts) {
+		t.Fatalf("customOptions(nil, nil) = %q, want canned list", got)
 	}
 
-	// history first, canned after, no duplicates
-	got := customOptions([]string{"Dog walk", cannedTexts[1]})
-	if got[0] != "Dog walk" || got[1] != cannedTexts[1] {
-		t.Fatalf("customOptions = %q, want history first", got)
+	// history first, then pins, canned after, no duplicates anywhere
+	got := customOptions([]string{"Dog walk", cannedTexts[1]}, []string{"Gym", "Dog walk"})
+	if got[0] != "Dog walk" || got[1] != cannedTexts[1] || got[2] != "Gym" {
+		t.Fatalf("customOptions = %q, want history then pins", got)
 	}
 	seen := map[string]bool{}
 	for _, o := range got {
@@ -67,7 +67,8 @@ func TestCustomOptions(t *testing.T) {
 		}
 		seen[o] = true
 	}
-	if len(got) != len(cannedTexts)+1 {
-		t.Fatalf("customOptions has %d entries, want %d", len(got), len(cannedTexts)+1)
+	// 2 history + 1 new pin ("Dog walk" deduped) + canned minus the one in history
+	if want := 3 + len(cannedTexts) - 1; len(got) != want {
+		t.Fatalf("customOptions has %d entries, want %d", len(got), want)
 	}
 }

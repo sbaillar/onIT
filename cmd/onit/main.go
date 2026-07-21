@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -113,24 +114,54 @@ func main() {
 	var setBusy func(bool)
 
 	// drop-down: last messages sent (here or in the emoji window), then
-	// the canned responses
-	customEntry := widget.NewSelectEntry(customOptions(a.Preferences().StringList(textHistoryKey)))
+	// pinned messages, then the canned responses
+	prefs := a.Preferences()
+	refreshOptions := func(e *widget.SelectEntry) {
+		e.SetOptions(customOptions(prefs.StringList(textHistoryKey), prefs.StringList(pinnedTextsKey)))
+	}
+	customEntry := widget.NewSelectEntry(nil)
+	refreshOptions(customEntry)
 	customEntry.SetPlaceHolder("Custom message...")
 	showCustom := func(msg string) {
 		msg = strings.TrimSpace(msg)
 		if msg != "" {
 			agent.SetOverride("custom:" + msg)
-			prefs := a.Preferences()
 			prefs.SetStringList(textHistoryKey, pushHistory(prefs.StringList(textHistoryKey), msg))
-			customEntry.SetOptions(customOptions(prefs.StringList(textHistoryKey)))
+			refreshOptions(customEntry)
 		}
 	}
 	customEntry.OnSubmitted = showCustom
+
+	// the pin keeps the typed message in the drop-down permanently
+	var pinBtn *widget.Button
+	pinIcon := func() fyne.Resource {
+		if slices.Contains(prefs.StringList(pinnedTextsKey), strings.TrimSpace(customEntry.Text)) {
+			return theme.ConfirmIcon() // pinned: tapping unpins
+		}
+		return theme.ContentAddIcon()
+	}
+	pinBtn = widget.NewButtonWithIcon("", theme.ContentAddIcon(), func() {
+		msg := strings.TrimSpace(customEntry.Text)
+		if msg == "" {
+			return
+		}
+		p := prefs.StringList(pinnedTextsKey)
+		if i := slices.Index(p, msg); i >= 0 {
+			p = slices.Delete(p, i, i+1)
+		} else {
+			p = append(p, msg)
+		}
+		prefs.SetStringList(pinnedTextsKey, p)
+		refreshOptions(customEntry)
+		pinBtn.SetIcon(pinIcon())
+	})
+	customEntry.OnChanged = func(string) { pinBtn.SetIcon(pinIcon()) }
+
 	customBtn := widget.NewButtonWithIcon("", dotResource("custom"), func() { showCustom(customEntry.Text) })
 	emojiBtn := widget.NewButtonWithIcon("",
 		fyne.NewStaticResource("smile.png", emoji.PNG("smile")),
 		func() { showEmojiPicker(a, agent, setBusy, func(res fyne.Resource) { lastEmoji = res }) })
-	customRow := container.NewBorder(nil, nil, nil, container.NewHBox(customBtn, emojiBtn), customEntry)
+	customRow := container.NewBorder(nil, nil, nil, container.NewHBox(pinBtn, customBtn, emojiBtn), customEntry)
 
 	fwLbl := widget.NewLabel("Firmware: ...")
 	fwLbl.Importance = widget.LowImportance

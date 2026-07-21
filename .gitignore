@@ -4,3 +4,7 @@ dist/
 build/
 firmware/busylight_round/build/
 docs/superpowers/
+
+# stray go build output (go build ./cmd/onit)
+/onit
+/onitctl

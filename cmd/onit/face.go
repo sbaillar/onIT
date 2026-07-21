@@ -2,6 +2,7 @@ package main
 
 import (
 	"image/color"
+	"math"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -55,8 +56,7 @@ type deviceFace struct {
 	mic   *canvas.Image
 	share *canvas.Image
 	emoji *canvas.Image
-	line1 *canvas.Text
-	line2 *canvas.Text
+	lines [5]*canvas.Text // lines[0]/[1] double as the state captions
 }
 
 func newDeviceFace() *deviceFace {
@@ -67,11 +67,11 @@ func newDeviceFace() *deviceFace {
 		mic:   canvas.NewImageFromResource(micIcon),
 		share: canvas.NewImageFromResource(shareIcon),
 		emoji: &canvas.Image{FillMode: canvas.ImageFillContain},
-		line1: canvas.NewText("", faceWhite),
-		line2: canvas.NewText("", faceWhite),
 	}
-	f.line1.TextStyle = fyne.TextStyle{Bold: true}
-	f.line2.TextStyle = fyne.TextStyle{Bold: true}
+	for i := range f.lines {
+		f.lines[i] = canvas.NewText("", faceWhite)
+		f.lines[i].TextStyle = fyne.TextStyle{Bold: true}
+	}
 
 	f.disc.Resize(fyne.NewSize(faceSize, faceSize))
 	f.dash.Resize(fyne.NewSize(faceSize, faceSize))
@@ -85,7 +85,10 @@ func newDeviceFace() *deviceFace {
 	place(f.share, 120, 74, fs(46))
 
 	inner := container.NewWithoutLayout(f.disc, f.emoji, f.dash,
-		f.dot, f.mic, f.share, f.line1, f.line2)
+		f.dot, f.mic, f.share)
+	for _, l := range f.lines {
+		inner.Add(l)
+	}
 	f.root = container.NewGridWrap(fyne.NewSize(faceSize, faceSize), inner)
 	return f
 }
@@ -110,23 +113,26 @@ func (f *deviceFace) setText(t *canvas.Text, s string, size float32, c color.Col
 // Set renders the screen the firmware draws for shown; emojiRes is the
 // emoji or text image last sent to the device (the wire payload has no name).
 func (f *deviceFace) Set(shown string, emojiRes fyne.Resource) {
-	for _, o := range []fyne.CanvasObject{f.dash, f.dot, f.mic, f.share, f.emoji, f.line1, f.line2} {
+	for _, o := range []fyne.CanvasObject{f.dash, f.dot, f.mic, f.share, f.emoji} {
 		o.Hide()
+	}
+	for _, l := range f.lines {
+		l.Hide()
 	}
 	switch stateKey(shown) {
 	case "available": // green ring, presence dot
 		f.fill(faceBgIdle, stateColors["available"], fs(4))
 		f.dot.Show()
-		f.setText(f.line1, "Available", 19, faceWhite, 136)
+		f.setText(f.lines[0], "Available", 19, faceWhite, 136)
 	case "meeting": // red, mic
 		f.fill(stateColors["meeting"], faceWhite, fs(7))
 		f.mic.Show()
-		f.setText(f.line1, "In a call", 19, faceWhite, 146)
+		f.setText(f.lines[0], "In a call", 19, faceWhite, 146)
 	case "sharing": // purple, monitor
 		f.fill(stateColors["sharing"], faceWhite, fs(8))
 		f.share.Show()
-		f.setText(f.line1, "Presenting", 19, faceWhite, 134)
-		f.setText(f.line2, "Do not disturb", 10, faceLavender, 164)
+		f.setText(f.lines[0], "Presenting", 19, faceWhite, 134)
+		f.setText(f.lines[1], "Do not disturb", 10, faceLavender, 164)
 	case "custom": // yellow, auto-fitted message
 		f.fill(stateColors["custom"], faceBlack, fs(5))
 		f.setCustom(strings.TrimPrefix(shown, "custom:"))
@@ -137,50 +143,76 @@ func (f *deviceFace) Set(shown string, emojiRes fyne.Resource) {
 			f.emoji.Show()
 			f.emoji.Refresh()
 		} else {
-			f.setText(f.line1, "?", 19, faceGrayText, 130)
+			f.setText(f.lines[0], "?", 19, faceGrayText, 130)
 		}
 	default: // off: black, dotted ring
 		f.fill(faceBlack, faceBlack, 0)
 		f.dash.Show()
-		f.setText(f.line1, "- -", 13, faceGrayText, 124)
+		f.setText(f.lines[0], "- -", 13, faceGrayText, 124)
 	}
 }
 
-// setCustom auto-fits the message like drawCustom: shrink through three
-// sizes, then wrap into two lines at the space nearest the middle.
-func (f *deviceFace) setCustom(msg string) {
-	sizes := []float32{19, 14, 10}
-	maxW := fs(180)
+// The custom screen's usable radius in firmware coordinates (240px face,
+// ring at 114 with 5px stroke, a little padding).
+const customRadius = 100
+
+// customChord is the width available to a text band [yTop, yBot].
+func customChord(yTop, yBot float32) float32 {
+	d := max(yTop-120, 120-yTop, yBot-120, 120-yBot)
+	if d >= customRadius {
+		return 0
+	}
+	return 2 * float32(math.Sqrt(float64(customRadius*customRadius-d*d)))
+}
+
+// customLayout wraps words into at most n vertically-centered lines,
+// honoring each line's chord width. ok is false if they don't fit.
+func customLayout(words []string, size, lineH float32, n int) (lines []string, ok bool) {
 	style := fyne.TextStyle{Bold: true}
-	for _, s := range sizes {
-		if fyne.MeasureText(msg, s, style).Width <= maxW {
-			f.setText(f.line1, msg, s, faceBlack, 120)
+	top := 120 - lineH*float32(n)/2
+	w := 0
+	for i := 0; i < n && w < len(words); i++ {
+		maxW := customChord(top+lineH*float32(i), top+lineH*float32(i+1))
+		line := ""
+		for w < len(words) {
+			cand := words[w]
+			if line != "" {
+				cand = line + " " + words[w]
+			}
+			if fyne.MeasureText(cand, size, style).Width*240/faceSize > maxW {
+				break
+			}
+			line = cand
+			w++
+		}
+		if line == "" {
+			return nil, false
+		}
+		lines = append(lines, line)
+	}
+	return lines, w == len(words)
+}
+
+// setCustom auto-fits the message like the firmware's drawCustom: the
+// biggest of three sizes that fits the circle, word-wrapped to the chord
+// width at each line.
+func (f *deviceFace) setCustom(msg string) {
+	words := strings.Fields(msg)
+	style := fyne.TextStyle{Bold: true}
+	for _, size := range []float32{19, 14, 10} {
+		lineH := fyne.MeasureText("Agy", size, style).Height * 240 / faceSize * 1.1
+		maxLines := min(len(f.lines), int(2*customRadius/lineH))
+		for n := 1; n <= maxLines; n++ {
+			lines, ok := customLayout(words, size, lineH, n)
+			if !ok {
+				continue
+			}
+			top := 120 - lineH*float32(n)/2
+			for i, l := range lines {
+				f.setText(f.lines[i], l, size, faceBlack, top+lineH*(float32(i)+0.5))
+			}
 			return
 		}
 	}
-	best, mid := -1, len(msg)/2
-	for i := range len(msg) {
-		if msg[i] == ' ' && (best < 0 || absInt(i-mid) < absInt(best-mid)) {
-			best = i
-		}
-	}
-	if best > 0 {
-		a, b := msg[:best], msg[best+1:]
-		for _, s := range sizes[1:] {
-			if fyne.MeasureText(a, s, style).Width <= maxW &&
-				fyne.MeasureText(b, s, style).Width <= maxW {
-				f.setText(f.line1, a, s, faceBlack, 96)
-				f.setText(f.line2, b, s, faceBlack, 144)
-				return
-			}
-		}
-	}
-	f.setText(f.line1, msg, sizes[2], faceBlack, 120) // best effort
-}
-
-func absInt(v int) int {
-	if v < 0 {
-		return -v
-	}
-	return v
+	f.setText(f.lines[0], msg, 10, faceBlack, 120) // best effort
 }

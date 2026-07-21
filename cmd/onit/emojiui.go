@@ -26,6 +26,7 @@ var cannedTexts = []string{
 
 const (
 	textHistoryKey = "textHistory"
+	pinnedTextsKey = "pinnedTexts"
 	emojiUsageKey  = "emojiUsage"
 )
 
@@ -41,13 +42,16 @@ func pushHistory(h []string, text string) []string {
 	return out
 }
 
-// customOptions builds the message drop-down: recent messages first,
-// then the canned responses not already among them.
-func customOptions(history []string) []string {
+// customOptions builds the message drop-down: recent messages first, then
+// pinned messages, then the canned responses — each tier deduplicated
+// against the ones above it.
+func customOptions(history, pinned []string) []string {
 	opts := slices.Clone(history)
-	for _, c := range cannedTexts {
-		if !slices.Contains(opts, c) {
-			opts = append(opts, c)
+	for _, tier := range [][]string{pinned, cannedTexts} {
+		for _, c := range tier {
+			if !slices.Contains(opts, c) {
+				opts = append(opts, c)
+			}
 		}
 	}
 	return opts
