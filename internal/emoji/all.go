@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/draw"
+	"sort"
 	"strings"
 	"sync"
 
@@ -64,10 +65,26 @@ func notoFile(codepoint string) string {
 	return "emoji_u" + strings.Join(parts, "_") + ".png"
 }
 
+// groupRank orders categories like the iPhone keyboard: smileys & people,
+// animals, food, activities, travel, objects, symbols, flags.
+var groupRank = map[string]int{
+	"Smileys & Emotion": 0, "People & Body": 1, "Animals & Nature": 2,
+	"Food & Drink": 3, "Activities": 4, "Travel & Places": 5,
+	"Objects": 6, "Symbols": 7, "Flags": 8,
+}
+
 var allOnce = sync.OnceValue(func() []Entry {
-	var out []Entry
+	type ranked struct {
+		Entry
+		rank int
+	}
+	var out []ranked
 	seen := map[string]bool{}
 	for _, g := range gomoji.AllEmojis() {
+		rank, ok := groupRank[g.Group]
+		if !ok {
+			continue // skin-tone components etc.
+		}
 		file := notoFile(g.CodePoint)
 		if seen[g.Slug] {
 			continue
@@ -76,14 +93,19 @@ var allOnce = sync.OnceValue(func() []Entry {
 			continue // no Noto artwork for this one
 		}
 		seen[g.Slug] = true
-		out = append(out, Entry{
+		out = append(out, ranked{Entry{
 			Slug: g.Slug,
 			Name: strings.ToLower(g.UnicodeName),
 			file: file,
-		})
+		}, rank})
 	}
-	return out
+	sort.SliceStable(out, func(i, j int) bool { return out[i].rank < out[j].rank })
+	entries := make([]Entry, len(out))
+	for i, r := range out {
+		entries[i] = r.Entry
+	}
+	return entries
 })
 
-// All lists every emoji with artwork, in gomoji's group order.
+// All lists every emoji with artwork, in iPhone keyboard category order.
 func All() []Entry { return allOnce() }

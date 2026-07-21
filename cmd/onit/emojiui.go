@@ -12,6 +12,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
 	"onit/internal/busylight"
@@ -101,6 +102,46 @@ func topUsed(list []string, n int) []string {
 	return out
 }
 
+// emojiCell is a bare tappable emoji image - lighter than a Button, so
+// thousands of them can sit in one scrolling grid.
+type emojiCell struct {
+	widget.Icon
+	onTap func()
+}
+
+func newEmojiCell(res fyne.Resource, onTap func()) *emojiCell {
+	c := &emojiCell{onTap: onTap}
+	c.ExtendBaseWidget(c)
+	c.SetResource(res)
+	return c
+}
+
+func (c *emojiCell) Tapped(*fyne.PointEvent) { c.onTap() }
+func (c *emojiCell) MinSize() fyne.Size      { return fyne.NewSize(40, 40) }
+
+const emojiRows = 6
+
+// emojiGrid lays entries out like the iPhone keyboard: column-major in a
+// fixed number of rows, scrolling horizontally.
+func emojiGrid(items []emoji.Entry, onTap func(emoji.Entry)) fyne.CanvasObject {
+	cols := (len(items) + emojiRows - 1) / emojiRows
+	objs := make([]fyne.CanvasObject, 0, emojiRows*cols)
+	for r := 0; r < emojiRows; r++ {
+		for c := 0; c < cols; c++ {
+			i := c*emojiRows + r // column-major: read down, then right
+			if i >= len(items) {
+				objs = append(objs, layout.NewSpacer())
+				continue
+			}
+			e := items[i]
+			objs = append(objs, newEmojiCell(
+				fyne.NewStaticResource(e.Slug+".png", e.PNG()),
+				func() { onTap(e) }))
+		}
+	}
+	return container.NewGridWithRows(emojiRows, objs...)
+}
+
 // showEmojiPicker lets the user send any standard emoji — or a short text,
 // auto-fitted to the round display — to the device (transfer takes ~2s at
 // 115200 baud). The top row quick-selects the 10 most-sent emojis. onPick
@@ -154,44 +195,32 @@ func showEmojiPicker(a fyne.App, agent *busylight.Agent, setBusy func(bool), onP
 	quickRow := container.NewGridWithColumns(10)
 	for _, s := range quick {
 		if e, ok := bySlug[s]; ok {
-			res := fyne.NewStaticResource(e.Slug+".png", e.PNG())
-			quickRow.Add(widget.NewButtonWithIcon("", res, func() { sendEmoji(e) }))
+			quickRow.Add(newEmojiCell(
+				fyne.NewStaticResource(e.Slug+".png", e.PNG()),
+				func() { sendEmoji(e) }))
 		}
 	}
 
-	// searchable virtualized grid over the full set
-	filtered := all
-	var grid *widget.GridWrap
-	grid = widget.NewGridWrap(
-		func() int { return len(filtered) },
-		func() fyne.CanvasObject {
-			b := widget.NewButtonWithIcon("", nil, nil)
-			b.Importance = widget.LowImportance
-			return b
-		},
-		func(id widget.GridWrapItemID, o fyne.CanvasObject) {
-			e := filtered[id]
-			b := o.(*widget.Button)
-			b.SetIcon(fyne.NewStaticResource(e.Slug+".png", e.PNG()))
-			b.OnTapped = func() { sendEmoji(e) }
-		},
-	)
+	// the full set, iPhone style: category order, scrolling to the right
+	fullGrid := emojiGrid(all, sendEmoji)
+	scroll := container.NewHScroll(fullGrid)
 	search := widget.NewEntry()
 	search.SetPlaceHolder("Search emoji...")
 	search.OnChanged = func(q string) {
 		q = strings.ToLower(strings.TrimSpace(q))
 		if q == "" {
-			filtered = all
+			scroll.Content = fullGrid
 		} else {
-			filtered = nil
+			var filtered []emoji.Entry
 			for _, e := range all {
 				if strings.Contains(e.Name, q) || strings.Contains(e.Slug, q) {
 					filtered = append(filtered, e)
 				}
 			}
+			scroll.Content = emojiGrid(filtered, sendEmoji)
 		}
-		grid.Refresh()
-		grid.ScrollToTop()
+		scroll.Offset = fyne.Position{}
+		scroll.Refresh()
 	}
 
 	entry := widget.NewEntry()
@@ -212,7 +241,7 @@ func showEmojiPicker(a fyne.App, agent *busylight.Agent, setBusy func(bool), onP
 		widget.NewButton("Send", func() { sendText(entry.Text) }), entry)
 
 	w.SetContent(container.NewPadded(container.NewBorder(
-		container.NewVBox(quickRow, search), textRow, nil, nil, grid)))
-	w.Resize(fyne.NewSize(560, 640)) // roughly double the old picker
+		container.NewVBox(quickRow, search), textRow, nil, nil, scroll)))
+	w.Resize(fyne.NewSize(680, 480)) // wide: the grid scrolls to the right
 	w.Show()
 }

@@ -43,6 +43,29 @@ func TestAllCoversTheStandardSet(t *testing.T) {
 	}
 }
 
+func TestAllOrderedLikeAnIPhone(t *testing.T) {
+	// one representative per category, in the iOS keyboard order:
+	// smileys/people, animals, food, activities, travel, objects,
+	// symbols, flags
+	reps := []string{"grinning-face", "thumbs-up", "dog-face", "pizza",
+		"soccer-ball", "rocket", "light-bulb", "check-mark-button", "chequered-flag"}
+	idx := map[string]int{}
+	for i, e := range All() {
+		idx[e.Slug] = i
+	}
+	last := -1
+	for _, s := range reps {
+		i, ok := idx[s]
+		if !ok {
+			t.Fatalf("missing representative emoji %q", s)
+		}
+		if i <= last {
+			t.Errorf("%s out of order (index %d, previous rep at %d)", s, i, last)
+		}
+		last = i
+	}
+}
+
 func TestEntryPayload(t *testing.T) {
 	var thumb Entry
 	for _, e := range All() {
