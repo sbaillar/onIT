@@ -199,8 +199,9 @@ func customLayout(words []string, size, lineH float32, n int) (lines []string, o
 func (f *deviceFace) setCustom(msg string) {
 	words := strings.Fields(msg)
 	style := fyne.TextStyle{Bold: true}
-	for _, size := range []float32{19, 14, 10} {
-		lineH := fyne.MeasureText("Agy", size, style).Height * 240 / faceSize * 1.1
+	// mirrors the firmware ladder: pixel-doubled 24/18pt, then 24/18/12/9pt
+	for _, size := range []float32{51, 38, 25, 19, 14, 10} {
+		lineH := fyne.MeasureText("Agy", size, style).Height * 240 / faceSize * 1.05
 		maxLines := min(len(f.lines), int(2*customRadius/lineH))
 		for n := 1; n <= maxLines; n++ {
 			lines, ok := customLayout(words, size, lineH, n)

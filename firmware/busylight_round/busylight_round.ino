@@ -20,10 +20,11 @@
  * waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28 for your revision.
  */
 
-#define FW_VERSION "1.6.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.7.0"   // extracted by `make firmware`, embedded in onIT
 
 #include <Arduino_GFX_Library.h>
 #include <Adafruit_GFX.h>   // only for its Fonts/ include path
+#include <Fonts/FreeSansBold24pt7b.h>
 #include <Fonts/FreeSansBold18pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSansBold9pt7b.h>
@@ -96,14 +97,19 @@ void ringDashed(int16_t r, int16_t w, uint16_t color, int nSeg, float onDeg) {
 }
 
 // cy = vertical center of the rendered text (GFX free fonts draw from baseline)
-void textCentered(const char *s, int16_t cy, const GFXfont *font, uint16_t color) {
+void textCenteredS(const char *s, int16_t cy, const GFXfont *font, uint8_t scale, uint16_t color) {
   gfx->setFont(font);
-  gfx->setTextSize(1);
+  gfx->setTextSize(scale);
   gfx->setTextColor(color);
   int16_t x1, y1; uint16_t tw, th;
   gfx->getTextBounds(s, 0, 0, &x1, &y1, &tw, &th);
   gfx->setCursor(120 - tw / 2 - x1, cy - th / 2 - y1);
   gfx->print(s);
+  gfx->setTextSize(1);
+}
+
+void textCentered(const char *s, int16_t cy, const GFXfont *font, uint16_t color) {
+  textCenteredS(s, cy, font, 1, color);
 }
 
 // ---- icons (spec 24x24 grid, scale s=2 -> ~46-48px, centered at cx,cy)
@@ -196,12 +202,22 @@ void drawEmoji() {
   backlight(80);
 }
 
-uint16_t textW(const char *s, const GFXfont *f) {
+uint16_t textW(const char *s, const GFXfont *f, uint8_t scale) {
   int16_t x1, y1; uint16_t w, h;
   gfx->setFont(f);
-  gfx->setTextSize(1);
+  gfx->setTextSize(scale);
   gfx->getTextBounds(s, 0, 0, &x1, &y1, &w, &h);
+  gfx->setTextSize(1);
   return w;
+}
+
+uint16_t textH(const char *s, const GFXfont *f, uint8_t scale) {
+  int16_t x1, y1; uint16_t w, h;
+  gfx->setFont(f);
+  gfx->setTextSize(scale);
+  gfx->getTextBounds(s, 0, 0, &x1, &y1, &w, &h);
+  gfx->setTextSize(1);
+  return h;
 }
 
 // ---- custom message: yellow face, biggest font that fits the circle,
@@ -219,7 +235,7 @@ uint16_t chordW(float yTop, float yBot) {
 }
 
 // wrap words into at most n vertically-centered lines; false if they don't fit
-bool customLayout(String *words, int wc, const GFXfont *f, float lineH, int n, String *out) {
+bool customLayout(String *words, int wc, const GFXfont *f, uint8_t scale, float lineH, int n, String *out) {
   float top = 120 - lineH * n / 2;
   int wi = 0;
   for (int i = 0; i < n && wi < wc; i++) {
@@ -227,7 +243,7 @@ bool customLayout(String *words, int wc, const GFXfont *f, float lineH, int n, S
     String line = "";
     while (wi < wc) {
       String cand = line.length() ? line + " " + words[wi] : words[wi];
-      if (textW(cand.c_str(), f) > maxW) break;
+      if (textW(cand.c_str(), f, scale) > maxW) break;
       line = cand;
       wi++;
     }
@@ -255,23 +271,26 @@ void drawCustom() {
   if (words[wc].length()) wc++;
   if (!wc) return;
 
-  const GFXfont *fonts[3] = {&FreeSansBold18pt7b, &FreeSansBold12pt7b, &FreeSansBold9pt7b};
-  for (int fi = 0; fi < 3; fi++) {
-    int16_t x1, y1; uint16_t w, h;
-    gfx->setFont(fonts[fi]);
-    gfx->getTextBounds("Agy", 0, 0, &x1, &y1, &w, &h);
-    float lineH = h * 1.15f;
+  // biggest first: pixel-doubled 24/18pt for short messages, then the
+  // regular sizes for longer ones
+  struct { const GFXfont *f; uint8_t s; } steps[6] = {
+    {&FreeSansBold24pt7b, 2}, {&FreeSansBold18pt7b, 2},
+    {&FreeSansBold24pt7b, 1}, {&FreeSansBold18pt7b, 1},
+    {&FreeSansBold12pt7b, 1}, {&FreeSansBold9pt7b, 1},
+  };
+  for (int fi = 0; fi < 6; fi++) {
+    float lineH = textH("Agy", steps[fi].f, steps[fi].s) * 1.05f;
     int maxLines = min(CUSTOM_MAX_LINES, (int)(2 * CUSTOM_RADIUS / lineH));
     for (int n = 1; n <= maxLines; n++) {
       String lines[CUSTOM_MAX_LINES];
-      if (!customLayout(words, wc, fonts[fi], lineH, n, lines)) continue;
+      if (!customLayout(words, wc, steps[fi].f, steps[fi].s, lineH, n, lines)) continue;
       float top = 120 - lineH * n / 2;
       for (int i = 0; i < n; i++)
-        textCentered(lines[i].c_str(), (int16_t)(top + lineH * (i + 0.5f)), fonts[fi], C_BLACK);
+        textCenteredS(lines[i].c_str(), (int16_t)(top + lineH * (i + 0.5f)), steps[fi].f, steps[fi].s, C_BLACK);
       return;
     }
   }
-  textCentered(customText.c_str(), 120, fonts[2], C_BLACK); // best effort
+  textCentered(customText.c_str(), 120, &FreeSansBold9pt7b, C_BLACK); // best effort
 }
 
 void drawFlashing() {
