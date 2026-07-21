@@ -26,6 +26,15 @@ onIT ships with a shared app registration, so for most people this is all:
 If your organization requires admin approval, the sign-in page says so -
 an admin approves once and after that everyone in your org can sign in.
 
+## "You cannot access this right now"?
+
+Your org's Conditional Access requires a managed device, which the code
+sign-in above cannot prove. Use **Sign in with browser** instead - the
+whole sign-in runs in your browser, which carries your device identity.
+Your Mac must be enrolled with your org and the browser signed in to
+your work account. Own registration? Add **http://localhost** as a
+**Mobile and desktop applications** redirect URI.
+
 ## Advanced: use your own app registration
 
 Only needed if your org blocks third-party apps or you want full control.
@@ -75,8 +84,9 @@ func showGraphSetup(a fyne.App, agent *busylight.Agent, refresh func()) {
 		d.Show()
 	})
 
-	var signInBtn *widget.Button
-	signInBtn = widget.NewButton("Sign in to Microsoft", func() {
+	// resolveApp reads the Advanced fields, persists them, and returns the
+	// effective client ID and tenant ("" client ID means: tell the user).
+	resolveApp := func() (string, string) {
 		id := strings.TrimSpace(clientID.Text)
 		if id == "" {
 			id = busylight.DefaultClientID
@@ -84,11 +94,20 @@ func showGraphSetup(a fyne.App, agent *busylight.Agent, refresh func()) {
 		if id == "" {
 			dialog.ShowInformation("No app registration",
 				"This build has no shared registration baked in.\nAdd a Client ID under Advanced (see Help).", w)
-			return
+			return "", ""
 		}
 		ten := strings.TrimSpace(tenant.Text)
 		a.Preferences().SetString("graphClientID", strings.TrimSpace(clientID.Text))
 		a.Preferences().SetString("graphTenant", ten)
+		return id, ten
+	}
+
+	var signInBtn *widget.Button
+	signInBtn = widget.NewButton("Sign in to Microsoft", func() {
+		id, ten := resolveApp()
+		if id == "" {
+			return
+		}
 
 		dc, err := busylight.StartDeviceLogin(id, ten)
 		if err != nil {
@@ -129,6 +148,41 @@ func showGraphSetup(a fyne.App, agent *busylight.Agent, refresh func()) {
 	})
 	signInBtn.Importance = widget.HighImportance
 
+	var browserBtn *widget.Button
+	browserBtn = widget.NewButton("Sign in with browser (managed device)", func() {
+		id, ten := resolveApp()
+		if id == "" {
+			return
+		}
+
+		bl, err := busylight.StartBrowserLogin(id, ten)
+		if err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		u, _ := url.Parse(bl.AuthURL)
+		a.OpenURL(u)
+		body := widget.NewLabel("Finish signing in to Microsoft\nin the browser window that just opened.")
+		d := dialog.NewCustom("Sign in with browser", "Cancel", body, w)
+		d.SetOnClosed(bl.Cancel)
+		d.Show()
+		browserBtn.Disable()
+		go func() {
+			err := agent.Graph.WaitForBrowserLogin(bl)
+			fyne.Do(func() {
+				browserBtn.Enable()
+				d.Hide()
+				if err != nil {
+					log.Printf("graph browser sign-in: %v", err)
+					dialog.ShowError(err, w)
+				} else {
+					setStatus()
+					refresh()
+				}
+			})
+		}()
+	})
+
 	signOutBtn := widget.NewButton("Sign out", func() {
 		agent.Graph.SignOut()
 		setStatus()
@@ -145,7 +199,7 @@ func showGraphSetup(a fyne.App, agent *busylight.Agent, refresh func()) {
 
 	w.SetContent(container.NewVBox(
 		status,
-		signInBtn, signOutBtn,
+		signInBtn, browserBtn, signOutBtn,
 		widget.NewSeparator(),
 		advanced,
 		helpBtn,
