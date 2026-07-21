@@ -224,6 +224,8 @@ func main() {
 
 		src := "no presence source"
 		switch {
+		case st.TeamsConnected && st.Source == "remote":
+			src = "Remote relay"
 		case st.TeamsConnected && st.Source == "graph":
 			src = "Microsoft Graph"
 		case st.TeamsConnected:
