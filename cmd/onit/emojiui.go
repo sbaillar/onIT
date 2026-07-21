@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"log"
+	"slices"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -32,6 +33,18 @@ func pushHistory(h []string, text string) []string {
 		}
 	}
 	return out
+}
+
+// customOptions builds the message drop-down: recent messages first,
+// then the canned responses not already among them.
+func customOptions(history []string) []string {
+	opts := slices.Clone(history)
+	for _, c := range cannedTexts {
+		if !slices.Contains(opts, c) {
+			opts = append(opts, c)
+		}
+	}
+	return opts
 }
 
 // showEmojiPicker lets the user send one of the embedded emojis — or a short
@@ -66,7 +79,7 @@ func showEmojiPicker(a fyne.App, agent *busylight.Agent, setBusy func(bool), onP
 		}))
 	}
 
-	entry := widget.NewSelectEntry(cannedTexts)
+	entry := widget.NewEntry()
 	entry.SetPlaceHolder("or type a message...")
 	sendText := func(text string) {
 		payload, png, err := emoji.TextPayload(text)
@@ -83,15 +96,6 @@ func showEmojiPicker(a fyne.App, agent *busylight.Agent, setBusy func(bool), onP
 	textRow := container.NewBorder(nil, nil, nil,
 		widget.NewButton("Send", func() { sendText(entry.Text) }), entry)
 
-	// the last messages sent, newest first, one click to resend
-	history := container.NewVBox()
-	for _, t := range a.Preferences().StringList(textHistoryKey) {
-		b := widget.NewButton(t, func() { sendText(t) })
-		b.Alignment = widget.ButtonAlignLeading
-		b.Importance = widget.LowImportance
-		history.Add(b)
-	}
-
-	w.SetContent(container.NewPadded(container.NewVBox(grid, history, textRow)))
+	w.SetContent(container.NewPadded(container.NewVBox(grid, textRow)))
 	w.Show()
 }

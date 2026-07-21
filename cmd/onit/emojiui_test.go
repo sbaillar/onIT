@@ -26,3 +26,26 @@ func TestPushHistory(t *testing.T) {
 		t.Fatalf("history after 4th = %q, want %q", h, want)
 	}
 }
+
+func TestCustomOptions(t *testing.T) {
+	// no history: just the canned list
+	if got := customOptions(nil); !slices.Equal(got, cannedTexts) {
+		t.Fatalf("customOptions(nil) = %q, want canned list", got)
+	}
+
+	// history first, canned after, no duplicates
+	got := customOptions([]string{"Dog walk", cannedTexts[1]})
+	if got[0] != "Dog walk" || got[1] != cannedTexts[1] {
+		t.Fatalf("customOptions = %q, want history first", got)
+	}
+	seen := map[string]bool{}
+	for _, o := range got {
+		if seen[o] {
+			t.Fatalf("customOptions has duplicate %q", o)
+		}
+		seen[o] = true
+	}
+	if len(got) != len(cannedTexts)+1 {
+		t.Fatalf("customOptions has %d entries, want %d", len(got), len(cannedTexts)+1)
+	}
+}

@@ -112,12 +112,17 @@ func main() {
 
 	var setBusy func(bool)
 
-	customEntry := widget.NewEntry()
+	// drop-down: last messages sent (here or in the emoji window), then
+	// the canned responses
+	customEntry := widget.NewSelectEntry(customOptions(a.Preferences().StringList(textHistoryKey)))
 	customEntry.SetPlaceHolder("Custom message...")
 	showCustom := func(msg string) {
 		msg = strings.TrimSpace(msg)
 		if msg != "" {
 			agent.SetOverride("custom:" + msg)
+			prefs := a.Preferences()
+			prefs.SetStringList(textHistoryKey, pushHistory(prefs.StringList(textHistoryKey), msg))
+			customEntry.SetOptions(customOptions(prefs.StringList(textHistoryKey)))
 		}
 	}
 	customEntry.OnSubmitted = showCustom
