@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -26,6 +27,14 @@ const autoLabel = "Auto (Teams)"
 
 // remoteAddr is where onIT listens for presence pushed by `onitctl -forward`.
 const remoteAddr = ":8125"
+
+// shortcutHint renders the window shortcut for state button n (1-4).
+func shortcutHint(n int) string {
+	if runtime.GOOS == "darwin" {
+		return fmt.Sprintf("⌘%d", n)
+	}
+	return fmt.Sprintf("Ctrl+%d", n)
+}
 
 // stateLabel names a state in the UI, matching the device's own wording.
 func stateLabel(s string) string {
@@ -87,8 +96,13 @@ func main() {
 		if c.state == "" {
 			btns[i] = widget.NewButton(c.label, func() { agent.SetOverride(c.state) })
 		} else {
-			btns[i] = widget.NewButtonWithIcon(c.label, dotResource(c.state),
-				func() { agent.SetOverride(c.state) })
+			// state buttons carry their window shortcut (cmd/ctrl+1-4)
+			btns[i] = widget.NewButtonWithIcon(c.label+"  "+shortcutHint(i),
+				dotResource(c.state), func() { agent.SetOverride(c.state) })
+			key := fyne.KeyName('0' + rune(i))
+			w.Canvas().AddShortcut(
+				&desktop.CustomShortcut{KeyName: key, Modifier: fyne.KeyModifierShortcutDefault},
+				func(fyne.Shortcut) { agent.SetOverride(c.state) })
 		}
 		stateItems[i] = fyne.NewMenuItem(c.label, func() { agent.SetOverride(c.state) })
 		if c.state != "" {
