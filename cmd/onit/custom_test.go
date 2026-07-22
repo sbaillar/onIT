@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image/color"
 	"testing"
 )
@@ -39,6 +40,58 @@ func TestCustomPayloadRoundTrip(t *testing.T) {
 	bg, fg, text := splitCustom(p)
 	if bg != "112233" || fg != "AABBCC" || text != "Hi" {
 		t.Fatalf("round trip = %q %q %q (payload %q)", bg, fg, text, p)
+	}
+}
+
+func TestRememberRecallForgetColors(t *testing.T) {
+	var list []string
+
+	// remember and recall a message's colors
+	list = rememberColors(list, "112233", "AABBCC", "Back in 5")
+	bg, fg, ok := recallColors(list, "Back in 5")
+	if !ok || bg != "112233" || fg != "AABBCC" {
+		t.Fatalf("recall = %q %q %v", bg, fg, ok)
+	}
+	if _, _, ok := recallColors(list, "On lunch"); ok {
+		t.Fatal("recalled colors for a message never remembered")
+	}
+
+	// re-remembering replaces, not duplicates
+	list = rememberColors(list, "000080", "FFFFFF", "Back in 5")
+	if len(list) != 1 {
+		t.Fatalf("list = %q, want one entry", list)
+	}
+	if bg, _, _ := recallColors(list, "Back in 5"); bg != "000080" {
+		t.Fatalf("recall after update = %q", bg)
+	}
+
+	// remembering the defaults just forgets the entry
+	list = rememberColors(list, defaultCustomBg, defaultCustomFg, "Back in 5")
+	if len(list) != 0 {
+		t.Fatalf("default colors kept an entry: %q", list)
+	}
+
+	// forget removes only the named message
+	list = rememberColors(list, "112233", "AABBCC", "A")
+	list = rememberColors(list, "445566", "DDEEFF", "B")
+	list = forgetColors(list, "A")
+	if _, _, ok := recallColors(list, "A"); ok {
+		t.Fatal("A still remembered after forget")
+	}
+	if _, _, ok := recallColors(list, "B"); !ok {
+		t.Fatal("forget(A) also dropped B")
+	}
+
+	// capped so preferences don't grow forever
+	list = nil
+	for i := 0; i < 60; i++ {
+		list = rememberColors(list, "112233", "AABBCC", fmt.Sprintf("msg %d", i))
+	}
+	if len(list) > 50 {
+		t.Fatalf("list grew to %d entries, want <= 50", len(list))
+	}
+	if _, _, ok := recallColors(list, "msg 59"); !ok {
+		t.Fatal("newest entry was evicted")
 	}
 }
 

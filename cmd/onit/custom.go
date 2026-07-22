@@ -46,6 +46,44 @@ func customPayload(bg, fg, text string) string {
 	return strings.ToUpper(bg) + "," + strings.ToUpper(fg) + ":" + text
 }
 
+// Per-message color memory: entries are stored as wire payloads
+// ("RRGGBB,RRGGBB:text"), newest first, capped so preferences stay small.
+const maxRememberedColors = 50
+
+// rememberColors records text's colors (default colors erase the memory).
+func rememberColors(list []string, bg, fg, text string) []string {
+	out := forgetColors(list, text)
+	if strings.EqualFold(bg, defaultCustomBg) && strings.EqualFold(fg, defaultCustomFg) {
+		return out
+	}
+	out = append([]string{customPayload(bg, fg, text)}, out...)
+	if len(out) > maxRememberedColors {
+		out = out[:maxRememberedColors]
+	}
+	return out
+}
+
+// recallColors looks up remembered colors for text.
+func recallColors(list []string, text string) (bg, fg string, ok bool) {
+	for _, e := range list {
+		if b, f, t := splitCustom(e); t == text {
+			return b, f, true
+		}
+	}
+	return "", "", false
+}
+
+// forgetColors removes text's memory, if any.
+func forgetColors(list []string, text string) []string {
+	var out []string
+	for _, e := range list {
+		if _, _, t := splitCustom(e); t != text {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // hexColor parses RRGGBB, falling back to the default background.
 func hexColor(s string) color.NRGBA {
 	v, err := strconv.ParseUint(s, 16, 32)

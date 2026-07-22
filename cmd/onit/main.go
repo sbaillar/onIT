@@ -129,28 +129,54 @@ func main() {
 	}
 	customEntry := widget.NewEntry()
 	customEntry.SetPlaceHolder("Custom message...")
+	// messageColors returns the colors for msg: its own remembered pair if
+	// it has one, the last globally picked colors otherwise
+	messageColors := func(msg string) (string, string) {
+		if bg, fg, ok := recallColors(prefs.StringList(messageColorsKey), msg); ok {
+			return bg, fg
+		}
+		return prefs.String(customBgKey), prefs.String(customFgKey)
+	}
 	showCustom := func(msg string) {
 		msg = strings.TrimSpace(msg)
 		if msg != "" {
-			agent.SetOverride("custom:" + customPayload(
-				prefs.String(customBgKey), prefs.String(customFgKey), msg))
+			bg, fg := messageColors(msg)
+			agent.SetOverride("custom:" + customPayload(bg, fg, msg))
 			prefs.SetStringList(textHistoryKey, pushHistory(prefs.StringList(textHistoryKey), msg))
 		}
 	}
 	customEntry.OnSubmitted = showCustom
 
-	// palette: pick the message background/font colors; reapplies a live
-	// custom message so the device updates as you pick
-	reapplyCustom := func() {
+	// palette: pick the message background/font colors. Picking while a
+	// message is showing updates the device live and is remembered for
+	// that message, so it returns in its own colors next time.
+	activeCustomText := func() string {
 		if ov := agent.Status().Override; strings.HasPrefix(ov, "custom:") {
 			_, _, text := splitCustom(strings.TrimPrefix(ov, "custom:"))
+			return text
+		}
+		return ""
+	}
+	reapplyCustom := func() {
+		if text := activeCustomText(); text != "" {
 			showCustom(text)
 		}
 	}
 	pickColor := func(title, key string) {
 		d := dialog.NewColorPicker(title, "", func(c color.Color) {
 			r, g, b, _ := c.RGBA()
-			prefs.SetString(key, fmt.Sprintf("%02X%02X%02X", uint8(r>>8), uint8(g>>8), uint8(b>>8)))
+			hex := fmt.Sprintf("%02X%02X%02X", uint8(r>>8), uint8(g>>8), uint8(b>>8))
+			if text := activeCustomText(); text != "" {
+				bg, fg := messageColors(text) // keep the other component
+				if key == customBgKey {
+					bg = hex
+				} else {
+					fg = hex
+				}
+				prefs.SetStringList(messageColorsKey,
+					rememberColors(prefs.StringList(messageColorsKey), bg, fg, text))
+			}
+			prefs.SetString(key, hex)
 			reapplyCustom()
 		}, w)
 		d.Advanced = true
@@ -160,6 +186,10 @@ func main() {
 		bgBtn := widget.NewButton("Background color...", func() { pickColor("Background color", customBgKey) })
 		fontBtn := widget.NewButton("Font color...", func() { pickColor("Font color", customFgKey) })
 		resetBtn := widget.NewButton("Reset to yellow / black", func() {
+			if text := activeCustomText(); text != "" {
+				prefs.SetStringList(messageColorsKey,
+					forgetColors(prefs.StringList(messageColorsKey), text))
+			}
 			prefs.SetString(customBgKey, "")
 			prefs.SetString(customFgKey, "")
 			reapplyCustom()

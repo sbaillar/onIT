@@ -26,12 +26,13 @@ var cannedTexts = []string{
 }
 
 const (
-	textHistoryKey  = "textHistory"
-	pinnedTextsKey  = "pinnedTexts"
-	removedTextsKey = "removedTexts"
-	customBgKey     = "customBg"
-	customFgKey     = "customFg"
-	emojiUsageKey   = "emojiUsage"
+	textHistoryKey   = "textHistory"
+	pinnedTextsKey   = "pinnedTexts"
+	removedTextsKey  = "removedTexts"
+	customBgKey      = "customBg"
+	customFgKey      = "customFg"
+	messageColorsKey = "messageColors"
+	emojiUsageKey    = "emojiUsage"
 )
 
 // pushHistory prepends text to the sent-message history: newest first,
