@@ -29,6 +29,8 @@ const (
 	textHistoryKey  = "textHistory"
 	pinnedTextsKey  = "pinnedTexts"
 	removedTextsKey = "removedTexts"
+	customBgKey     = "customBg"
+	customFgKey     = "customFg"
 	emojiUsageKey   = "emojiUsage"
 )
 

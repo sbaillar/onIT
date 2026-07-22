@@ -21,7 +21,7 @@ func TestSetCustomFitsShortAndLong(t *testing.T) {
 	test.NewApp()
 
 	f := newDeviceFace()
-	f.setCustom("Hi")
+	f.setCustom("Hi", faceBlack)
 	if got := customLines(f); len(got) != 1 || got[0] != "Hi" {
 		t.Fatalf("short custom lines = %q, want [Hi]", got)
 	}
@@ -32,7 +32,7 @@ func TestSetCustomFitsShortAndLong(t *testing.T) {
 	// a few short words spread over lines at a big size rather than
 	// squeezing onto fewer lines at a small one
 	f3 := newDeviceFace()
-	f3.setCustom("Back in 5")
+	f3.setCustom("Back in 5", faceBlack)
 	if got := customLines(f3); len(got) < 2 {
 		t.Errorf("Back in 5 lines = %q, want spread over 2+", got)
 	}
@@ -42,7 +42,7 @@ func TestSetCustomFitsShortAndLong(t *testing.T) {
 
 	msg := "Walking the dog around the block right now"
 	f2 := newDeviceFace()
-	f2.setCustom(msg)
+	f2.setCustom(msg, faceBlack)
 	got := customLines(f2)
 	if len(got) < 3 {
 		t.Fatalf("long custom lines = %q, want 3+ wrapped lines", got)

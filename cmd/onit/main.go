@@ -4,6 +4,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"image/color"
 	"log"
 	"os"
 	"runtime"
@@ -126,11 +127,42 @@ func main() {
 	showCustom := func(msg string) {
 		msg = strings.TrimSpace(msg)
 		if msg != "" {
-			agent.SetOverride("custom:" + msg)
+			agent.SetOverride("custom:" + customPayload(
+				prefs.String(customBgKey), prefs.String(customFgKey), msg))
 			prefs.SetStringList(textHistoryKey, pushHistory(prefs.StringList(textHistoryKey), msg))
 		}
 	}
 	customEntry.OnSubmitted = showCustom
+
+	// palette: pick the message background/font colors; reapplies a live
+	// custom message so the device updates as you pick
+	reapplyCustom := func() {
+		if ov := agent.Status().Override; strings.HasPrefix(ov, "custom:") {
+			_, _, text := splitCustom(strings.TrimPrefix(ov, "custom:"))
+			showCustom(text)
+		}
+	}
+	pickColor := func(title, key string) {
+		d := dialog.NewColorPicker(title, "", func(c color.Color) {
+			r, g, b, _ := c.RGBA()
+			prefs.SetString(key, fmt.Sprintf("%02X%02X%02X", uint8(r>>8), uint8(g>>8), uint8(b>>8)))
+			reapplyCustom()
+		}, w)
+		d.Advanced = true
+		d.Show()
+	}
+	paletteBtn := widget.NewButtonWithIcon("", theme.ColorPaletteIcon(), func() {
+		bgBtn := widget.NewButton("Background color...", func() { pickColor("Background color", customBgKey) })
+		fontBtn := widget.NewButton("Font color...", func() { pickColor("Font color", customFgKey) })
+		resetBtn := widget.NewButton("Reset to yellow / black", func() {
+			prefs.SetString(customBgKey, "")
+			prefs.SetString(customFgKey, "")
+			reapplyCustom()
+		})
+		dialog.ShowCustom("Message colors", "Close",
+			container.NewVBox(bgBtn, fontBtn, resetBtn), w)
+	})
+	paletteBtn.Importance = widget.LowImportance
 
 	var showDrop func()
 	dropBtn := widget.NewButtonWithIcon("", theme.MenuDropDownIcon(), func() { showDrop() })
@@ -204,7 +236,7 @@ func main() {
 	emojiBtn := widget.NewButtonWithIcon("",
 		fyne.NewStaticResource("smile.png", emoji.PNG("smile")),
 		func() { showEmojiPicker(a, agent, setBusy, func(res fyne.Resource) { lastEmoji = res }) })
-	customRow := container.NewBorder(nil, nil, nil, container.NewHBox(pinBtn, customBtn, emojiBtn), customEntry)
+	customRow := container.NewBorder(nil, nil, nil, container.NewHBox(paletteBtn, pinBtn, customBtn, emojiBtn), customEntry)
 
 	fwLbl := widget.NewLabel("Firmware: ...")
 	fwLbl.Importance = widget.LowImportance

@@ -132,9 +132,10 @@ func (f *deviceFace) Set(shown string, emojiRes fyne.Resource) {
 		f.share.Show()
 		f.setText(f.lines[0], "Presenting", 19, faceWhite, 134)
 		f.setText(f.lines[1], "Do not disturb", 10, faceLavender, 164)
-	case "custom": // yellow, auto-fitted message
-		f.fill(stateColors["custom"], faceBlack, fs(5))
-		f.setCustom(strings.TrimPrefix(shown, "custom:"))
+	case "custom": // user-colored (default yellow), auto-fitted message
+		bg, fg, text := splitCustom(strings.TrimPrefix(shown, "custom:"))
+		f.fill(hexColor(bg), hexColor(fg), fs(5))
+		f.setCustom(text, hexColor(fg))
 	case "emoji":
 		f.fill(faceBgIdle, faceBgIdle, 0)
 		if emojiRes != nil {
@@ -195,7 +196,7 @@ func customLayout(words []string, size, lineH float32, n int) (lines []string, o
 // setCustom auto-fits the message like the firmware's drawCustom: the
 // biggest of three sizes that fits the circle, word-wrapped to the chord
 // width at each line.
-func (f *deviceFace) setCustom(msg string) {
+func (f *deviceFace) setCustom(msg string, fg color.Color) {
 	words := strings.Fields(msg)
 	style := fyne.TextStyle{Bold: true}
 	// mirrors the firmware ladder: pixel-doubled 24/18pt, then 24/18/12/9pt
@@ -209,10 +210,10 @@ func (f *deviceFace) setCustom(msg string) {
 			}
 			top := 120 - lineH*float32(n)/2
 			for i, l := range lines {
-				f.setText(f.lines[i], l, size, faceBlack, top+lineH*(float32(i)+0.5))
+				f.setText(f.lines[i], l, size, fg, top+lineH*(float32(i)+0.5))
 			}
 			return
 		}
 	}
-	f.setText(f.lines[0], msg, 10, faceBlack, 120) // best effort
+	f.setText(f.lines[0], msg, 10, fg, 120) // best effort
 }

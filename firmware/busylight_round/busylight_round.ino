@@ -7,6 +7,7 @@
  *
  * Serial in : STATE:available|meeting|sharing|flashing|off   @115200
  *             STATE:custom:<text>       (yellow screen, text auto-fitted)
+ *             STATE:custom:RRGGBB,RRGGBB:<text>  (background,font colors)
  *             EMOJI:<base64>            (120x120 RGB565 LE image, pixel-
  *             doubled to fill the screen; shown
  *             immediately and kept alive by STATE:emoji heartbeats)
@@ -22,7 +23,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28 for your revision.
  */
 
-#define FW_VERSION "1.8.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.9.0"   // extracted by `make firmware`, embedded in onIT
 
 #include <Arduino_GFX_Library.h>
 #include <Adafruit_GFX.h>   // only for its Fonts/ include path
@@ -82,6 +83,7 @@ State state = ST_OFF;
 unsigned long lastSerial   = 0;
 unsigned long lastStateChg = 0;
 String customText;
+uint16_t customBg = C_YELLOW, customFg = C_BLACK;
 uint16_t emojiBuf[120 * 120];
 bool emojiValid = false;
 String lineBuf;
@@ -263,8 +265,8 @@ bool customLayout(String *words, int wc, const GFXfont *f, uint8_t scale, float 
 }
 
 void drawCustom() {
-  gfx->fillScreen(C_YELLOW);
-  ringSolid(114, 5, C_BLACK);
+  gfx->fillScreen(customBg);
+  ringSolid(114, 5, customFg);
   backlight(100);
 
   String words[CUSTOM_MAX_WORDS];
@@ -295,11 +297,11 @@ void drawCustom() {
       if (!customLayout(words, wc, steps[fi].f, steps[fi].s, lineH, n, lines)) continue;
       float top = 120 - lineH * n / 2;
       for (int i = 0; i < n; i++)
-        textCenteredS(lines[i].c_str(), (int16_t)(top + lineH * (i + 0.5f)), steps[fi].f, steps[fi].s, C_BLACK);
+        textCenteredS(lines[i].c_str(), (int16_t)(top + lineH * (i + 0.5f)), steps[fi].f, steps[fi].s, customFg);
       return;
     }
   }
-  textCentered(customText.c_str(), 120, &FreeSansBold9pt7b, C_BLACK); // best effort
+  textCentered(customText.c_str(), 120, &FreeSansBold9pt7b, customFg); // best effort
 }
 
 void drawFlashing() {
@@ -333,6 +335,20 @@ void setState(State s) {
 }
 
 // ---------------------------------------------------------------- serial
+bool isHex6(const String &s, int off) {
+  for (int i = 0; i < 6; i++)
+    if (!isxdigit(s[off + i])) return false;
+  return true;
+}
+
+// six hex chars at off -> RGB565
+uint16_t hex565(const String &s, int off) {
+  long v = strtol(s.substring(off, off + 6).c_str(), NULL, 16);
+  return ((uint16_t)((v >> 16 & 0xFF) >> 3) << 11) |
+         ((uint16_t)((v >> 8 & 0xFF) >> 2) << 5) |
+         (uint16_t)((v & 0xFF) >> 3);
+}
+
 void handleLine(const String &line) {
   if (line == "VERSION") { Serial.print("VERSION:" FW_VERSION "\n"); return; }
   if (line.startsWith("EMOJI:")) {
@@ -349,8 +365,18 @@ void handleLine(const String &line) {
   String s = line.substring(6); s.trim();
   if (s.startsWith("custom:")) {
     String msg = s.substring(7);
-    if (state != ST_CUSTOM || msg != customText) {  // redraw on text change too
+    uint16_t bg = C_YELLOW, fg = C_BLACK;
+    // optional RRGGBB,RRGGBB: color prefix
+    if (msg.length() >= 14 && msg[6] == ',' && msg[13] == ':' &&
+        isHex6(msg, 0) && isHex6(msg, 7)) {
+      bg = hex565(msg, 0);
+      fg = hex565(msg, 7);
+      msg = msg.substring(14);
+    }
+    if (state != ST_CUSTOM || msg != customText || bg != customBg || fg != customFg) {
       customText = msg;
+      customBg = bg;
+      customFg = fg;
       state = ST_CUSTOM;
       lastStateChg = millis();
       drawCustom();
