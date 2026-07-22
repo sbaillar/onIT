@@ -51,12 +51,12 @@ func TestUsageTracking(t *testing.T) {
 
 func TestCustomOptions(t *testing.T) {
 	// no history, no pins: just the canned list
-	if got := customOptions(nil, nil); !slices.Equal(got, cannedTexts) {
-		t.Fatalf("customOptions(nil, nil) = %q, want canned list", got)
+	if got := customOptions(nil, nil, nil); !slices.Equal(got, cannedTexts) {
+		t.Fatalf("customOptions(nil, nil, nil) = %q, want canned list", got)
 	}
 
 	// history first, then pins, canned after, no duplicates anywhere
-	got := customOptions([]string{"Dog walk", cannedTexts[1]}, []string{"Gym", "Dog walk"})
+	got := customOptions([]string{"Dog walk", cannedTexts[1]}, []string{"Gym", "Dog walk"}, nil)
 	if got[0] != "Dog walk" || got[1] != cannedTexts[1] || got[2] != "Gym" {
 		t.Fatalf("customOptions = %q, want history then pins", got)
 	}
@@ -70,5 +70,45 @@ func TestCustomOptions(t *testing.T) {
 	// 2 history + 1 new pin ("Dog walk" deduped) + canned minus the one in history
 	if want := 3 + len(cannedTexts) - 1; len(got) != want {
 		t.Fatalf("customOptions has %d entries, want %d", len(got), want)
+	}
+
+	// removed canned messages stay hidden
+	got = customOptions(nil, nil, []string{cannedTexts[0]})
+	if slices.Contains(got, cannedTexts[0]) || len(got) != len(cannedTexts)-1 {
+		t.Fatalf("customOptions with removed = %q, want %q hidden", got, cannedTexts[0])
+	}
+}
+
+func TestRemoveMessage(t *testing.T) {
+	history := []string{"Dog walk", cannedTexts[0]}
+	pinned := []string{"Gym", "Dog walk"}
+	var removed []string
+
+	// a history+pinned message disappears from both
+	history, pinned, removed = removeMessage(history, pinned, removed, "Dog walk")
+	if slices.Contains(history, "Dog walk") || slices.Contains(pinned, "Dog walk") {
+		t.Fatalf("Dog walk still present: history=%q pinned=%q", history, pinned)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("removed = %q, want empty (not a canned message)", removed)
+	}
+
+	// a canned message is suppressed via the removed list (and dropped from
+	// history it may appear in)
+	history, pinned, removed = removeMessage(history, pinned, removed, cannedTexts[0])
+	if !slices.Contains(removed, cannedTexts[0]) {
+		t.Fatalf("removed = %q, want %q in it", removed, cannedTexts[0])
+	}
+	if slices.Contains(history, cannedTexts[0]) {
+		t.Fatalf("history still has %q", cannedTexts[0])
+	}
+	if got := customOptions(history, pinned, removed); slices.Contains(got, cannedTexts[0]) {
+		t.Fatalf("options still show removed canned: %q", got)
+	}
+
+	// removing twice stays stable
+	_, _, removed2 := removeMessage(history, pinned, removed, cannedTexts[0])
+	if len(removed2) != len(removed) {
+		t.Fatalf("double remove grew the list: %q", removed2)
 	}
 }

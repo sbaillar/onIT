@@ -114,23 +114,59 @@ func main() {
 	var setBusy func(bool)
 
 	// drop-down: last messages sent (here or in the emoji window), then
-	// pinned messages, then the canned responses
+	// pinned messages, then the canned responses; every row has an X to
+	// delete it (built-in canned ones stay suppressed once deleted)
 	prefs := a.Preferences()
-	refreshOptions := func(e *widget.SelectEntry) {
-		e.SetOptions(customOptions(prefs.StringList(textHistoryKey), prefs.StringList(pinnedTextsKey)))
+	options := func() []string {
+		return customOptions(prefs.StringList(textHistoryKey),
+			prefs.StringList(pinnedTextsKey), prefs.StringList(removedTextsKey))
 	}
-	customEntry := widget.NewSelectEntry(nil)
-	refreshOptions(customEntry)
+	customEntry := widget.NewEntry()
 	customEntry.SetPlaceHolder("Custom message...")
 	showCustom := func(msg string) {
 		msg = strings.TrimSpace(msg)
 		if msg != "" {
 			agent.SetOverride("custom:" + msg)
 			prefs.SetStringList(textHistoryKey, pushHistory(prefs.StringList(textHistoryKey), msg))
-			refreshOptions(customEntry)
 		}
 	}
 	customEntry.OnSubmitted = showCustom
+
+	var showDrop func()
+	dropBtn := widget.NewButtonWithIcon("", theme.MenuDropDownIcon(), func() { showDrop() })
+	dropBtn.Importance = widget.LowImportance
+	customEntry.ActionItem = dropBtn
+	showDrop = func() {
+		opts := options()
+		if len(opts) == 0 {
+			return
+		}
+		var pop *widget.PopUp
+		rows := container.NewVBox()
+		for _, o := range opts {
+			pick := widget.NewButton(o, func() {
+				pop.Hide()
+				customEntry.SetText(o) // OnChanged applies it immediately
+			})
+			pick.Alignment = widget.ButtonAlignLeading
+			pick.Importance = widget.LowImportance
+			del := widget.NewButtonWithIcon("", theme.ContentClearIcon(), func() {
+				h, p, r := removeMessage(prefs.StringList(textHistoryKey),
+					prefs.StringList(pinnedTextsKey), prefs.StringList(removedTextsKey), o)
+				prefs.SetStringList(textHistoryKey, h)
+				prefs.SetStringList(pinnedTextsKey, p)
+				prefs.SetStringList(removedTextsKey, r)
+				pop.Hide()
+				showDrop() // reopen with the row gone
+			})
+			del.Importance = widget.LowImportance
+			rows.Add(container.NewBorder(nil, nil, nil, del, pick))
+		}
+		pop = widget.NewPopUp(rows, w.Canvas())
+		pos := a.Driver().AbsolutePositionForObject(customEntry)
+		pop.ShowAtPosition(pos.Add(fyne.NewPos(0, customEntry.Size().Height)))
+		pop.Resize(fyne.NewSize(customEntry.Size().Width, pop.MinSize().Height))
+	}
 
 	// the pin keeps the typed message in the drop-down permanently
 	var pinBtn *widget.Button
@@ -152,7 +188,6 @@ func main() {
 			p = append(p, msg)
 		}
 		prefs.SetStringList(pinnedTextsKey, p)
-		refreshOptions(customEntry)
 		pinBtn.SetIcon(pinIcon())
 	})
 	// picking a drop-down option (or typing one out exactly) applies it
@@ -160,8 +195,7 @@ func main() {
 	customEntry.OnChanged = func(s string) {
 		pinBtn.SetIcon(pinIcon())
 		s = strings.TrimSpace(s)
-		if s != "" && slices.Contains(
-			customOptions(prefs.StringList(textHistoryKey), prefs.StringList(pinnedTextsKey)), s) {
+		if s != "" && slices.Contains(options(), s) {
 			showCustom(s)
 		}
 	}

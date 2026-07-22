@@ -26,9 +26,10 @@ var cannedTexts = []string{
 }
 
 const (
-	textHistoryKey = "textHistory"
-	pinnedTextsKey = "pinnedTexts"
-	emojiUsageKey  = "emojiUsage"
+	textHistoryKey  = "textHistory"
+	pinnedTextsKey  = "pinnedTexts"
+	removedTextsKey = "removedTexts"
+	emojiUsageKey   = "emojiUsage"
 )
 
 // pushHistory prepends text to the sent-message history: newest first,
@@ -45,17 +46,37 @@ func pushHistory(h []string, text string) []string {
 
 // customOptions builds the message drop-down: recent messages first, then
 // pinned messages, then the canned responses — each tier deduplicated
-// against the ones above it.
-func customOptions(history, pinned []string) []string {
+// against the ones above it. Canned messages the user deleted (removed)
+// stay hidden.
+func customOptions(history, pinned, removed []string) []string {
 	opts := slices.Clone(history)
-	for _, tier := range [][]string{pinned, cannedTexts} {
-		for _, c := range tier {
-			if !slices.Contains(opts, c) {
-				opts = append(opts, c)
-			}
+	for _, c := range pinned {
+		if !slices.Contains(opts, c) {
+			opts = append(opts, c)
+		}
+	}
+	for _, c := range cannedTexts {
+		if !slices.Contains(opts, c) && !slices.Contains(removed, c) {
+			opts = append(opts, c)
 		}
 	}
 	return opts
+}
+
+// removeMessage deletes text from every tier it appears in; built-in canned
+// messages are suppressed via the removed list.
+func removeMessage(history, pinned, removed []string, text string) (h, p, r []string) {
+	drop := func(l []string) []string {
+		if i := slices.Index(l, text); i >= 0 {
+			return slices.Delete(slices.Clone(l), i, i+1)
+		}
+		return l
+	}
+	h, p, r = drop(history), drop(pinned), removed
+	if slices.Contains(cannedTexts, text) && !slices.Contains(removed, text) {
+		r = append(slices.Clone(removed), text)
+	}
+	return h, p, r
 }
 
 // Usage counts live in preferences as "slug count" strings.
