@@ -169,8 +169,18 @@ func emojiGrid(items []emoji.Entry, onTap func(emoji.Entry)) fyne.CanvasObject {
 // auto-fitted to the round display — to the device (transfer takes ~2s at
 // 115200 baud). The top row quick-selects the 10 most-sent emojis. onPick
 // reports the sent image so the window face can mirror it.
+// pickerWin is the open picker window, if any - clicking the emoji button
+// again focuses it instead of stacking a second one.
+var pickerWin fyne.Window
+
 func showEmojiPicker(a fyne.App, agent *busylight.Agent, setBusy func(bool), onPick func(res fyne.Resource)) {
+	if pickerWin != nil {
+		pickerWin.RequestFocus()
+		return
+	}
 	w := a.NewWindow("Send an emoji")
+	pickerWin = w
+	w.SetOnClosed(func() { pickerWin = nil })
 
 	send := func(res fyne.Resource, payload string) {
 		w.Close()

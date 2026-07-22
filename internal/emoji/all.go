@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/draw"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -73,10 +74,84 @@ var groupRank = map[string]int{
 	"Objects": 6, "Symbols": 7, "Flags": 8,
 }
 
+// subgroupRank orders subgroups within each category per CLDR's
+// emoji-test.txt — the sequence every keyboard follows. Unknown subgroups
+// sink to the end of their category.
+var subgroupRank = func() map[string]int {
+	order := []string{
+		// Smileys & Emotion
+		"face-smiling", "face-affection", "face-tongue", "face-hand",
+		"face-neutral-skeptical", "face-sleepy", "face-unwell", "face-hat",
+		"face-glasses", "face-concerned", "face-negative", "face-costume",
+		"cat-face", "monkey-face", "heart", "emotion",
+		// People & Body
+		"hand-fingers-open", "hand-fingers-partial", "hand-single-finger",
+		"hand-fingers-closed", "hands", "hand-prop", "body-parts", "person",
+		"person-gesture", "person-role", "person-fantasy", "person-activity",
+		"person-sport", "person-resting", "family", "person-symbol",
+		// Animals & Nature
+		"animal-mammal", "animal-bird", "animal-amphibian", "animal-reptile",
+		"animal-marine", "animal-bug", "plant-flower", "plant-other",
+		// Food & Drink
+		"food-fruit", "food-vegetable", "food-prepared", "food-asian",
+		"food-marine", "food-sweet", "drink", "dishware",
+		// Travel & Places
+		"place-map", "place-geographic", "place-building", "place-religious",
+		"place-other", "transport-ground", "transport-water", "transport-air",
+		"hotel", "time", "sky & weather",
+		// Activities
+		"event", "award-medal", "sport", "game", "arts & crafts",
+		// Objects
+		"clothing", "sound", "music", "musical-instrument", "phone",
+		"computer", "light & video", "book-paper", "money", "mail",
+		"writing", "office", "lock", "tool", "science", "medical",
+		"household", "other-object",
+		// Symbols
+		"transport-sign", "warning", "arrow", "religion", "zodiac",
+		"av-symbol", "gender", "math", "punctuation", "currency",
+		"other-symbol", "keycap", "alphanum", "geometric",
+		// Flags
+		"flag", "country-flag", "subdivision-flag",
+	}
+	m := make(map[string]int, len(order))
+	for i, s := range order {
+		m[s] = i
+	}
+	return m
+}()
+
+// codepointKey turns "1F600" / "1F468 200D ..." into a sortable value of
+// its leading codepoint (CLDR orders roughly by codepoint within subgroups).
+func codepointKey(cp string) uint64 {
+	first, _, _ := strings.Cut(cp, " ")
+	v, err := strconv.ParseUint(first, 16, 64)
+	if err != nil {
+		return 1 << 62
+	}
+	return v
+}
+
+// order.txt is Unicode's emoji-test.txt sequence (the exact keyboard
+// order), one normalized codepoint key per line.
+//
+//go:embed order.txt
+var orderTxt string
+
+// cldrIndex maps a normalized codepoint key ("1f468_200d_1f469") to its
+// position in the official keyboard order.
+var cldrIndex = func() map[string]int {
+	m := map[string]int{}
+	for i, line := range strings.Split(strings.TrimSpace(orderTxt), "\n") {
+		m[strings.TrimSpace(line)] = i
+	}
+	return m
+}()
+
 var allOnce = sync.OnceValue(func() []Entry {
 	type ranked struct {
 		Entry
-		rank int
+		group, cldr, sub int
+		cp               uint64
 	}
 	var out []ranked
 	seen := map[string]bool{}
@@ -93,13 +168,36 @@ var allOnce = sync.OnceValue(func() []Entry {
 			continue // no Noto artwork for this one
 		}
 		seen[g.Slug] = true
+		sub, ok := subgroupRank[g.SubGroup]
+		if !ok {
+			sub = len(subgroupRank) // unknown subgroup: end of its category
+		}
+		key := strings.TrimSuffix(strings.TrimPrefix(file, "emoji_u"), ".png")
+		cldr, ok := cldrIndex[key]
+		if !ok {
+			cldr = len(cldrIndex) // not in emoji-test.txt: after the known ones
+		}
 		out = append(out, ranked{Entry{
 			Slug: g.Slug,
 			Name: strings.ToLower(g.UnicodeName),
 			file: file,
-		}, rank})
+		}, rank, cldr, sub, codepointKey(g.CodePoint)})
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].rank < out[j].rank })
+	// iPhone category order first, then the exact CLDR keyboard sequence;
+	// subgroup/codepoint only break ties for emojis missing from order.txt
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.group != b.group {
+			return a.group < b.group
+		}
+		if a.cldr != b.cldr {
+			return a.cldr < b.cldr
+		}
+		if a.sub != b.sub {
+			return a.sub < b.sub
+		}
+		return a.cp < b.cp
+	})
 	entries := make([]Entry, len(out))
 	for i, r := range out {
 		entries[i] = r.Entry

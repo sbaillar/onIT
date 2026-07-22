@@ -64,6 +64,26 @@ func TestAllOrderedLikeAnIPhone(t *testing.T) {
 		}
 		last = i
 	}
+
+	// within categories the CLDR keyboard order must hold too
+	if All()[0].Slug != "grinning-face" {
+		t.Errorf("All()[0] = %s, want grinning-face (the keyboard starts with it)", All()[0].Slug)
+	}
+	within := [][2]string{
+		{"grinning-face", "face-with-tears-of-joy"}, // both face-smiling, by codepoint
+		{"face-with-tears-of-joy", "red-heart"},     // smiling faces before hearts
+		{"waving-hand", "thumbs-up"},                // open hands before closed
+		{"thumbs-up", "folded-hands"},
+		{"dog-face", "cat-face"}, // mammals by codepoint
+	}
+	for _, p := range within {
+		if idx[p[0]] == 0 && p[0] != "grinning-face" {
+			t.Fatalf("missing %q", p[0])
+		}
+		if idx[p[0]] >= idx[p[1]] {
+			t.Errorf("%s (%d) should come before %s (%d)", p[0], idx[p[0]], p[1], idx[p[1]])
+		}
+	}
 }
 
 func TestEntryPayload(t *testing.T) {

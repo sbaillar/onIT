@@ -32,6 +32,22 @@ func isOnitProcess(pid int) bool {
 	return strings.Contains(strings.ToLower(strings.TrimSpace(string(out))), "onit")
 }
 
+// onitPids lists every running onIT GUI process by exact image name
+// (-x, so the headless onitctl is never matched).
+func onitPids() []int {
+	out, err := exec.Command("pgrep", "-x", "onIT").Output()
+	if err != nil {
+		return nil
+	}
+	var pids []int
+	for _, f := range strings.Fields(string(out)) {
+		if pid, err := strconv.Atoi(f); err == nil {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
 // terminate asks nicely, then kills. Reports whether the process is gone.
 func terminate(pid int) bool {
 	p, err := os.FindProcess(pid)

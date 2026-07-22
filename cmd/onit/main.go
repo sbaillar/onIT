@@ -69,6 +69,11 @@ func main() {
 		log.Print(msg)
 		a.SendNotification(fyne.NewNotification("onIT", msg))
 	}
+	// the pid file only knows the newest instance; after updates, older
+	// copies can survive it - sweep them by process name too
+	if n := killStrays(); n > 0 {
+		log.Printf("stopped %d stray onIT instance(s)", n)
+	}
 
 	agent := busylight.NewAgent()
 

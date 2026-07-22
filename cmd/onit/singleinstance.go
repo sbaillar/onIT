@@ -30,3 +30,16 @@ func takeoverInstance(path string, isOnit func(int) bool) (int, error) {
 	}
 	return stopped, os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0o644)
 }
+
+// killStrays terminates every other running onIT GUI process found by exact
+// image name. The pid file only remembers the most recent instance; after an
+// update, copies started outside its knowledge would otherwise survive.
+func killStrays() int {
+	n := 0
+	for _, pid := range onitPids() {
+		if pid != os.Getpid() && pidAlive(pid) && terminate(pid) {
+			n++
+		}
+	}
+	return n
+}
