@@ -43,11 +43,39 @@ type Agent struct {
 }
 
 func NewAgent() *Agent {
-	return &Agent{
+	a := &Agent{
 		light:      NewLight(),
 		Graph:      LoadGraph(),
 		kick:       make(chan struct{}, 1),
 		teamsState: "off",
+	}
+	a.light.SetOnTouch(a.HandleTouch)
+	return a
+}
+
+// HandleTouch reacts to a touch event from the device: a tap cycles the
+// manual override (and dismisses emoji/custom screens), a long press
+// toggles do-not-disturb.
+func (a *Agent) HandleTouch(kind string) {
+	a.mu.Lock()
+	cur := a.override
+	a.mu.Unlock()
+	switch kind {
+	case "TAP":
+		next, ok := map[string]string{
+			"": "available", "available": "meeting",
+			"meeting": "sharing", "sharing": "off", "off": "",
+		}[cur]
+		if !ok {
+			next = "" // emoji or custom screen: tap dismisses to auto
+		}
+		a.SetOverride(next)
+	case "LONG":
+		if cur == "sharing" {
+			a.SetOverride("")
+		} else {
+			a.SetOverride("sharing")
+		}
 	}
 }
 

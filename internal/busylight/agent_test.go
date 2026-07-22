@@ -68,3 +68,41 @@ func TestOverrideResolution(t *testing.T) {
 		t.Errorf("teams-down Status = %+v, want Shown=off TeamsConnected=false", st)
 	}
 }
+
+func TestHandleTouch(t *testing.T) {
+	a := NewAgent()
+
+	// tap cycles auto -> available -> meeting -> sharing -> off -> auto
+	for _, want := range []string{"available", "meeting", "sharing", "off", ""} {
+		a.HandleTouch("TAP")
+		if got := a.Status().Override; got != want {
+			t.Fatalf("tap cycle: Override = %q, want %q", got, want)
+		}
+	}
+
+	// tap dismisses an emoji or custom override straight back to auto
+	for _, ov := range []string{"emoji", "custom:Back in 5"} {
+		a.SetOverride(ov)
+		a.HandleTouch("TAP")
+		if got := a.Status().Override; got != "" {
+			t.Errorf("tap on %q: Override = %q, want auto", ov, got)
+		}
+	}
+
+	// long press toggles do-not-disturb (sharing)
+	a.HandleTouch("LONG")
+	if got := a.Status().Override; got != "sharing" {
+		t.Fatalf("long press: Override = %q, want sharing", got)
+	}
+	a.HandleTouch("LONG")
+	if got := a.Status().Override; got != "" {
+		t.Fatalf("second long press: Override = %q, want auto", got)
+	}
+
+	// unknown kinds are ignored
+	a.SetOverride("meeting")
+	a.HandleTouch("SWIPE")
+	if got := a.Status().Override; got != "meeting" {
+		t.Errorf("unknown touch changed Override to %q", got)
+	}
+}

@@ -12,6 +12,8 @@
  *             immediately and kept alive by STATE:emoji heartbeats)
  *             VERSION                    (query firmware version)
  * Serial out: VERSION:x.y.z     (at boot and on VERSION query)
+ *             TOUCH:TAP / TOUCH:LONG   (screen tapped / long-pressed;
+ *             the host decides what they mean)
  * Watchdog  : no serial for 5s -> OFF/STALE (except FLASHING: sticky,
  *             shown until the flash reset - the port is closed during esptool)
  *
@@ -20,10 +22,11 @@
  * waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28 for your revision.
  */
 
-#define FW_VERSION "1.7.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.8.0"   // extracted by `make firmware`, embedded in onIT
 
 #include <Arduino_GFX_Library.h>
 #include <Adafruit_GFX.h>   // only for its Fonts/ include path
+#include <Wire.h>           // CST816S touch, polled over I2C
 #include <Fonts/FreeSansBold24pt7b.h>
 #include <Fonts/FreeSansBold18pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
@@ -37,6 +40,12 @@
 #define LCD_CS     9
 #define LCD_RST   14
 #define LCD_BL     2
+
+// CST816S touch controller (Waveshare wiki pinout for this board)
+#define TP_SDA     6
+#define TP_SCL     7
+#define TP_RST    13
+#define TP_ADDR 0x15
 
 
 // ---------------------------------------------------------------- palette (RGB565 from spec)
@@ -356,12 +365,52 @@ void handleLine(const String &line) {
   else                       setState(ST_OFF);
 }
 
+// ---------------------------------------------------------------- touch
+void tpWrite(uint8_t reg, uint8_t v) {
+  Wire.beginTransmission(TP_ADDR);
+  Wire.write(reg);
+  Wire.write(v);
+  Wire.endTransmission();
+}
+
+uint8_t tpRead(uint8_t reg) {
+  Wire.beginTransmission(TP_ADDR);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return 0;
+  if (Wire.requestFrom(TP_ADDR, 1) != 1) return 0;
+  return Wire.read();
+}
+
+void touchInit() {
+  pinMode(TP_RST, OUTPUT);
+  digitalWrite(TP_RST, LOW);
+  delay(10);
+  digitalWrite(TP_RST, HIGH);
+  delay(100);
+  Wire.begin(TP_SDA, TP_SCL);
+  tpWrite(0xFE, 0x01);  // disable auto-sleep so polling keeps working
+}
+
+// poll the gesture register; report each new gesture once
+void touchPoll() {
+  static unsigned long lastPoll = 0;
+  static uint8_t lastGesture = 0;
+  if (millis() - lastPoll < 50) return;
+  lastPoll = millis();
+  uint8_t g = tpRead(0x01);  // GestureID: 0x05 single click, 0x0C long press
+  if (g == lastGesture) return;
+  lastGesture = g;
+  if (g == 0x05)      Serial.print("TOUCH:TAP\n");
+  else if (g == 0x0C) Serial.print("TOUCH:LONG\n");
+}
+
 // ---------------------------------------------------------------- setup/loop
 void setup() {
   Serial.setRxBufferSize(4096);   // EMOJI payloads burst ~27 KB
   Serial.begin(115200);
   ledcAttach(LCD_BL, 5000, 8);
   gfx->begin();
+  touchInit();
   drawOff();
   lastSerial = 0;
   Serial.print("VERSION:" FW_VERSION "\n");   // boot banner; host resets us on connect
@@ -374,6 +423,8 @@ void loop() {
     if (c == '\n') { handleLine(lineBuf); lineBuf = ""; }
     else if (c != '\r') lineBuf += c;
   }
+
+  touchPoll();
 
   // 5s stale watchdog
   if (state != ST_OFF && state != ST_FLASHING && millis() - lastSerial > 5000) setState(ST_OFF);

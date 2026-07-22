@@ -31,7 +31,11 @@ type Light struct {
 	nextScan  time.Time
 	connected atomic.Bool
 	version   atomic.Value // string: firmware version from VERSION: banner
+	onTouch   atomic.Value // func(string): TOUCH: event callback
 }
+
+// SetOnTouch registers a callback for TOUCH: events from the device.
+func (l *Light) SetOnTouch(f func(kind string)) { l.onTouch.Store(f) }
 
 func NewLight() *Light {
 	return &Light{}
@@ -113,12 +117,19 @@ func (l *Light) ensureLocked() bool {
 	return true
 }
 
-// reader watches device output (VERSION banners) until the port dies.
+// reader watches device output (VERSION banners, TOUCH events) until the
+// port dies.
 func (l *Light) reader(port serial.Port) {
 	sc := bufio.NewScanner(port)
 	for sc.Scan() {
-		if v, ok := strings.CutPrefix(strings.TrimSpace(sc.Text()), "VERSION:"); ok {
+		line := strings.TrimSpace(sc.Text())
+		if v, ok := strings.CutPrefix(line, "VERSION:"); ok {
 			l.version.Store(v)
+		}
+		if kind, ok := strings.CutPrefix(line, "TOUCH:"); ok {
+			if f, _ := l.onTouch.Load().(func(string)); f != nil {
+				go f(kind)
+			}
 		}
 	}
 	l.drop(port)
