@@ -126,6 +126,45 @@ func topUsed(list []string, n int) []string {
 	return out
 }
 
+// starterEmojis seed the quick-select spots until real usage takes over.
+var starterEmojis = []string{"thumbs-up", "red-heart", "face-with-tears-of-joy",
+	"hot-beverage", "pizza", "headphone", "check-mark-button", "fire",
+	"party-popper", "no-entry"}
+
+// topEmojiSlugs returns the n most-sent emojis, starters filling the gaps.
+func topEmojiSlugs(usage []string, n int) []string {
+	out := topUsed(usage, n)
+	for _, s := range starterEmojis {
+		if len(out) == n {
+			break
+		}
+		if !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// sendEmojiNow pushes e to the device and records it (usage count, face
+// mirror) - shared by the picker and the tray shortcuts.
+func sendEmojiNow(a fyne.App, agent *busylight.Agent, setBusy func(bool), onPick func(res fyne.Resource), e emoji.Entry) {
+	payload, err := e.Payload()
+	if err != nil {
+		log.Printf("emoji %s: %v", e.Slug, err)
+		return
+	}
+	prefs := a.Preferences()
+	prefs.SetStringList(emojiUsageKey, bumpUsage(prefs.StringList(emojiUsageKey), e.Slug))
+	onPick(fyne.NewStaticResource(e.Slug+".png", e.PNG()))
+	setBusy(true)
+	go func() {
+		if !agent.ShowEmoji(payload) {
+			log.Printf("emoji: device not connected")
+		}
+		fyne.Do(func() { setBusy(false) })
+	}()
+}
+
 // emojiCell is a bare tappable emoji image - lighter than a Button, so
 // thousands of them can sit in one scrolling grid.
 type emojiCell struct {
@@ -202,30 +241,12 @@ func showEmojiPicker(a fyne.App, agent *busylight.Agent, setBusy func(bool), onP
 	}
 
 	sendEmoji := func(e emoji.Entry) {
-		payload, err := e.Payload()
-		if err != nil {
-			log.Printf("emoji %s: %v", e.Slug, err)
-			return
-		}
-		prefs := a.Preferences()
-		prefs.SetStringList(emojiUsageKey, bumpUsage(prefs.StringList(emojiUsageKey), e.Slug))
-		send(fyne.NewStaticResource(e.Slug+".png", e.PNG()), payload)
+		w.Close()
+		sendEmojiNow(a, agent, setBusy, onPick, e)
 	}
 
 	// quick select: the 10 most-sent emojis (a starter set until then)
-	quick := topUsed(a.Preferences().StringList(emojiUsageKey), 10)
-	if len(quick) < 10 {
-		for _, s := range []string{"thumbs-up", "red-heart", "face-with-tears-of-joy",
-			"hot-beverage", "pizza", "headphone", "check-mark-button", "fire",
-			"party-popper", "no-entry"} {
-			if len(quick) == 10 {
-				break
-			}
-			if !slices.Contains(quick, s) {
-				quick = append(quick, s)
-			}
-		}
-	}
+	quick := topEmojiSlugs(a.Preferences().StringList(emojiUsageKey), 10)
 	quickRow := container.NewGridWithColumns(10)
 	for _, s := range quick {
 		if e, ok := bySlug[s]; ok {

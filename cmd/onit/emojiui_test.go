@@ -49,6 +49,31 @@ func TestUsageTracking(t *testing.T) {
 	}
 }
 
+func TestTopEmojiSlugs(t *testing.T) {
+	// no usage yet: starters fill the list
+	got := topEmojiSlugs(nil, 5)
+	if len(got) != 5 || got[0] != starterEmojis[0] {
+		t.Fatalf("topEmojiSlugs(nil, 5) = %q, want first starters", got)
+	}
+
+	// used emojis lead, starters fill the rest without duplicates
+	usage := []string{"pizza 7", "fire 3"}
+	got = topEmojiSlugs(usage, 5)
+	if got[0] != "pizza" || got[1] != "fire" {
+		t.Fatalf("topEmojiSlugs = %q, want usage first", got)
+	}
+	if len(got) != 5 {
+		t.Fatalf("topEmojiSlugs = %d entries, want 5", len(got))
+	}
+	seen := map[string]bool{}
+	for _, s := range got {
+		if seen[s] {
+			t.Fatalf("duplicate %q in %q", s, got)
+		}
+		seen[s] = true
+	}
+}
+
 func TestCustomOptions(t *testing.T) {
 	// no history, no pins: just the canned list
 	if got := customOptions(nil, nil, nil); !slices.Equal(got, cannedTexts) {

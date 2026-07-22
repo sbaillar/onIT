@@ -290,11 +290,50 @@ func main() {
 		}
 	}
 
+	// tray shortcuts: top-5 emojis and top-5 messages as submenus,
+	// rebuilt as usage and history evolve
+	emojiBySlug := map[string]emoji.Entry{}
+	for _, e := range emoji.All() {
+		emojiBySlug[e.Slug] = e
+	}
+	emojiParent := fyne.NewMenuItem("Send emoji", nil)
+	emojiParent.ChildMenu = fyne.NewMenu("")
+	msgParent := fyne.NewMenuItem("Set message", nil)
+	msgParent.ChildMenu = fyne.NewMenu("")
+	refreshTrayShortcuts := func() {
+		var eItems []*fyne.MenuItem
+		for _, slug := range topEmojiSlugs(prefs.StringList(emojiUsageKey), 5) {
+			e, ok := emojiBySlug[slug]
+			if !ok {
+				continue
+			}
+			it := fyne.NewMenuItem(e.Name, func() {
+				sendEmojiNow(a, agent, setBusy, func(res fyne.Resource) { lastEmoji = res }, e)
+			})
+			it.Icon = fyne.NewStaticResource(e.Slug+".png", e.PNG())
+			eItems = append(eItems, it)
+		}
+		emojiParent.ChildMenu.Items = eItems
+		var mItems []*fyne.MenuItem
+		for i, msg := range options() {
+			if i == 5 {
+				break
+			}
+			mItems = append(mItems, fyne.NewMenuItem(msg, func() { showCustom(msg) }))
+		}
+		msgParent.ChildMenu.Items = mItems
+	}
+	refreshTrayShortcuts()
+
 	menuItems := []*fyne.MenuItem{
 		fyne.NewMenuItem("Open onIT", func() { w.Show(); w.RequestFocus() }),
 		fyne.NewMenuItemSeparator(),
 	}
 	menuItems = append(menuItems, stateItems...)
+	menuItems = append(menuItems,
+		fyne.NewMenuItemSeparator(),
+		emojiParent, msgParent,
+	)
 	doUninstall := func() {
 		w.Show()
 		dialog.ShowConfirm("Uninstall onIT",
@@ -396,6 +435,7 @@ func main() {
 				stateItems[i].Checked = want == widget.HighImportance
 			}
 		}
+		refreshTrayShortcuts() // usage/history may have changed
 		trayMenu.Refresh()
 
 		if !flashing {
