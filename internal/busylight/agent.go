@@ -26,10 +26,12 @@ type Status struct {
 // All serial writes happen on a single push goroutine, so a state change can
 // never be overwritten by a concurrent stale heartbeat.
 type Agent struct {
-	light    *Light
-	Graph    *Graph        // Microsoft Graph presence source (preferred)
-	kick     chan struct{} // wakes the push goroutine after a state change
-	flashing atomic.Bool   // suspends serial pushes while esptool owns the port
+	light     *Light
+	Graph     *Graph        // Microsoft Graph presence source (preferred)
+	kick      chan struct{} // wakes the push goroutine after a state change
+	flashing  atomic.Bool   // suspends serial pushes while esptool owns the port
+	micRule   atomic.Bool   // escalate available -> meeting while the mic is live
+	micActive atomic.Bool   // last observed microphone state
 
 	mu          sync.Mutex
 	teamsUp     bool
@@ -83,10 +85,19 @@ func (a *Agent) HandleTouch(kind string) {
 // Must be set before Run.
 func (a *Agent) OnChange(f func()) { a.onChange = f }
 
+// SetMicRule turns the "live microphone shows In a call" rule on or off.
+func (a *Agent) SetMicRule(on bool) {
+	a.micRule.Store(on)
+	a.wake()
+}
+
 // effectiveLocked returns the state the light should show. Caller holds mu.
 func (a *Agent) effectiveLocked() string {
 	if a.override != "" {
 		return a.override
+	}
+	if a.teamsState == "available" && a.micRule.Load() && a.micActive.Load() {
+		return "meeting" // on a call the presence source doesn't know about
 	}
 	return a.teamsState
 }
@@ -217,6 +228,17 @@ func (a *Agent) Run() {
 			a.notify()
 		}
 	}()
+	go func() { // watch the microphone for the mic rule
+		for {
+			if a.micRule.Load() {
+				if now := micInUse(); now != a.micActive.Load() {
+					a.micActive.Store(now)
+					a.wake()
+				}
+			}
+			time.Sleep(3 * time.Second)
+		}
+	}()
 	for {
 		var err error
 		if a.remoteFresh() {
@@ -225,6 +247,9 @@ func (a *Agent) Run() {
 		} else if a.Graph.SignedIn() {
 			a.setSource("graph")
 			err = a.graphSession()
+		} else if teamsLogAvailable() {
+			a.setSource("teamslog")
+			err = a.teamsLogSession()
 		} else {
 			a.setSource("teams")
 			err = a.session()

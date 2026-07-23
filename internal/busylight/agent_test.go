@@ -69,6 +69,47 @@ func TestOverrideResolution(t *testing.T) {
 	}
 }
 
+func TestMicRule(t *testing.T) {
+	a := NewAgent()
+	a.mu.Lock()
+	a.teamsUp, a.teamsState = true, "available"
+	a.mu.Unlock()
+
+	// rule off: mic activity is ignored
+	a.micActive.Store(true)
+	if got := a.Status().Shown; got != "available" {
+		t.Fatalf("rule off: Shown = %q, want available", got)
+	}
+
+	// rule on: a live mic escalates available to meeting
+	a.SetMicRule(true)
+	if got := a.Status().Shown; got != "meeting" {
+		t.Fatalf("mic active: Shown = %q, want meeting", got)
+	}
+
+	// a real call state is left alone, and overrides still win
+	a.mu.Lock()
+	a.teamsState = "sharing"
+	a.mu.Unlock()
+	if got := a.Status().Shown; got != "sharing" {
+		t.Errorf("mic + sharing: Shown = %q, want sharing", got)
+	}
+	a.SetOverride("off")
+	if got := a.Status().Shown; got != "off" {
+		t.Errorf("mic + override: Shown = %q, want off", got)
+	}
+	a.SetOverride("")
+
+	// mic released: back to the real state
+	a.mu.Lock()
+	a.teamsState = "available"
+	a.mu.Unlock()
+	a.micActive.Store(false)
+	if got := a.Status().Shown; got != "available" {
+		t.Errorf("mic released: Shown = %q, want available", got)
+	}
+}
+
 func TestHandleTouch(t *testing.T) {
 	a := NewAgent()
 

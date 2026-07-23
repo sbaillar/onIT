@@ -31,6 +31,7 @@ func main() {
 	forward := flag.String("forward", "", "push presence to a remote onIT instead of driving a local light (e.g. http://hammer-mini:8125; plain HTTP - trusted networks only)")
 	token := flag.String("token", "", "shared token for -forward (shown when the receiver enables remote presence)")
 	listen := flag.String("listen", "", "also accept remote presence pushes on this address (e.g. :8125)")
+	mic := flag.Bool("mic", true, "a live microphone escalates available to in-a-call")
 	flag.Parse()
 
 	switch {
@@ -68,6 +69,7 @@ func main() {
 
 	default:
 		agent := busylight.NewAgent()
+		agent.SetMicRule(*mic)
 		if *listen != "" {
 			rs, err := agent.ListenRemote(*listen)
 			if err != nil {

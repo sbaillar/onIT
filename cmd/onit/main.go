@@ -282,6 +282,15 @@ func main() {
 		showGraphSetup(a, agent, func() { fyne.Do(update) })
 	})
 
+	// mic rule: a live microphone (any app) escalates green to In a call
+	micCheck := widget.NewCheck("Mic in use shows In a call", func(on bool) {
+		prefs.SetBool("micRule", on)
+		agent.SetMicRule(on)
+	})
+	micOn := prefs.BoolWithFallback("micRule", true)
+	micCheck.SetChecked(micOn)
+	agent.SetMicRule(micOn)
+
 	loginCheck := widget.NewCheck("Start at login", nil)
 	loginCheck.SetChecked(autostartEnabled())
 	loginCheck.OnChanged = func(on bool) {
@@ -413,6 +422,8 @@ func main() {
 			src = "Remote relay"
 		case st.TeamsConnected && st.Source == "graph":
 			src = "Microsoft Graph"
+		case st.TeamsConnected && st.Source == "teamslog":
+			src = "Teams app (local)"
 		case st.TeamsConnected:
 			src = "Teams local API"
 		}
@@ -530,7 +541,7 @@ func main() {
 	// Not an Accordion: Fyne grows the fixed-size window when content
 	// expands but never shrinks it back, and Accordion offers no toggle
 	// hook - so a look-alike button that resizes the window on collapse.
-	settingsBody := container.NewVBox(fwLbl, fwBtn, graphSetupBtn, remoteCheck, loginCheck)
+	settingsBody := container.NewVBox(fwLbl, fwBtn, graphSetupBtn, remoteCheck, micCheck, loginCheck)
 	settingsBody.Hide()
 	var settingsBtn *widget.Button
 	settingsBtn = widget.NewButtonWithIcon("Settings", theme.MenuDropDownIcon(), func() {
