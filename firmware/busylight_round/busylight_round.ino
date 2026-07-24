@@ -150,7 +150,7 @@ void drawAvailable() {
   ringSolid(114, 4, C_WHITE);
   gfx->fillCircle(120, 92, 11, C_WHITE);                 // presence dot above text
   textCentered("Available", 136, &FreeSansBold18pt7b, C_WHITE);
-  backlight(40);
+  backlight(100);
 }
 
 void drawMeeting() {
