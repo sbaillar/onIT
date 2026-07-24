@@ -20,7 +20,10 @@ var stateColors = map[string]color.NRGBA{
 	"off":       {0x40, 0x40, 0x40, 0xFF},
 }
 
-var dots = map[string]fyne.Resource{}
+var (
+	dots       = map[string]fyne.Resource{}
+	activeDots = map[string]fyne.Resource{} // ringed: the state currently shown
+)
 
 func init() {
 	for _, s := range busylight.States {
@@ -32,6 +35,11 @@ func init() {
 		dots[s] = fyne.NewStaticResource("dot-"+s+".svg", fmt.Appendf(nil,
 			`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44"><circle cx="22" cy="22" r="18.5" fill="#%02X%02X%02X"/></svg>`,
 			c.R, c.G, c.B))
+		activeDots[s] = fyne.NewStaticResource("dot-active-"+s+".svg", fmt.Appendf(nil,
+			`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">`+
+				`<circle cx="22" cy="22" r="20.5" fill="none" stroke="#%02X%02X%02X" stroke-width="3"/>`+
+				`<circle cx="22" cy="22" r="14" fill="#%02X%02X%02X"/></svg>`,
+			c.R, c.G, c.B, c.R, c.G, c.B))
 	}
 }
 
@@ -48,4 +56,12 @@ func dotResource(state string) fyne.Resource {
 		return r
 	}
 	return dots["off"]
+}
+
+// activeDotResource is the ringed variant marking the state the light shows.
+func activeDotResource(state string) fyne.Resource {
+	if r, ok := activeDots[state]; ok {
+		return r
+	}
+	return activeDots["off"]
 }

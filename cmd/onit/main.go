@@ -433,6 +433,7 @@ func main() {
 		}
 		capLbl.SetText(src + "  /  " + light)
 
+		shownKey := stateKey(st.Shown)
 		for i, c := range choices {
 			want := widget.MediumImportance
 			if st.Override == c.state && (c.state != "" || st.Override == "") {
@@ -442,8 +443,21 @@ func main() {
 				btns[i].Importance = want
 				btns[i].Refresh()
 			}
-			if stateItems[i].Checked != (want == widget.HighImportance) {
-				stateItems[i].Checked = want == widget.HighImportance
+			// highlight the live state too: ringed dot + check, so in Auto
+			// the menu still shows what the light is doing right now
+			live := c.state != "" && c.state == shownKey
+			if c.state != "" {
+				icon := dotResource(c.state)
+				if live {
+					icon = activeDotResource(c.state)
+				}
+				if stateItems[i].Icon != icon {
+					stateItems[i].Icon = icon
+				}
+			}
+			checked := want == widget.HighImportance || live
+			if stateItems[i].Checked != checked {
+				stateItems[i].Checked = checked
 			}
 		}
 		refreshTrayShortcuts() // usage/history may have changed
