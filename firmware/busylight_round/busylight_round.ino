@@ -23,7 +23,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28 for your revision.
  */
 
-#define FW_VERSION "1.9.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.10.0"   // extracted by `make firmware`, embedded in onIT
 
 #include <Arduino_GFX_Library.h>
 #include <Adafruit_GFX.h>   // only for its Fonts/ include path
@@ -146,11 +146,11 @@ void iconShare(int cx, int cy, uint16_t color, float s = 1.9f) {
 
 // ---------------------------------------------------------------- state renderers
 void drawAvailable() {
-  gfx->fillScreen(C_BG_IDLE);
-  ringSolid(114, 4, C_GREEN);                            // thin ring, hugs the edge
-  gfx->fillCircle(120, 92, 11, C_GREEN);                 // presence dot above text
+  gfx->fillScreen(C_GREEN);                              // full-screen green
+  ringSolid(114, 4, C_WHITE);
+  gfx->fillCircle(120, 92, 11, C_WHITE);                 // presence dot above text
   textCentered("Available", 136, &FreeSansBold18pt7b, C_WHITE);
-  backlight(20);
+  backlight(40);
 }
 
 void drawMeeting() {

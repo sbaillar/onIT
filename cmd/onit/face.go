@@ -62,7 +62,7 @@ func newDeviceFace() *deviceFace {
 	f := &deviceFace{
 		disc:  canvas.NewCircle(faceBgIdle),
 		dash:  canvas.NewImageFromResource(dashRing),
-		dot:   canvas.NewCircle(stateColors["available"]),
+		dot:   canvas.NewCircle(faceWhite), // on the full-green available screen
 		mic:   canvas.NewImageFromResource(micIcon),
 		share: canvas.NewImageFromResource(shareIcon),
 		emoji: &canvas.Image{FillMode: canvas.ImageFillContain},
@@ -119,8 +119,8 @@ func (f *deviceFace) Set(shown string, emojiRes fyne.Resource) {
 		l.Hide()
 	}
 	switch stateKey(shown) {
-	case "available": // green ring, presence dot
-		f.fill(faceBgIdle, stateColors["available"], fs(4))
+	case "available": // full-screen green, white ring and dot
+		f.fill(stateColors["available"], faceWhite, fs(4))
 		f.dot.Show()
 		f.setText(f.lines[0], "Available", 19, faceWhite, 136)
 	case "meeting": // red, mic
