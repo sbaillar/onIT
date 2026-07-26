@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/base64"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,25 +38,42 @@ type transport interface {
 // may be a different physical device (e.g. a BLE-bonded AMOLED plus another
 // board on USB), so one must never answer for the other.
 type Light struct {
-	usb        transport
-	serial     *serialTransport // concrete handle for serial-only PortName
-	bleVersion atomic.Value     // string: version from the BLE device's banner
-	bleBoard   atomic.Value     // string: board from the BLE device's banner
-	onTouch    atomic.Value     // func(string): TOUCH: event callback
+	usb         transport
+	serial      *serialTransport // concrete handle for serial-only PortName
+	bleVersion  atomic.Value     // string: version from the BLE device's banner
+	bleBoard    atomic.Value     // string: board from the BLE device's banner
+	onTouch     atomic.Value     // func(string): TOUCH: event callback
+	onRoulette  atomic.Value     // func(int): ROULETTE: winner-slot callback
+	deckSource  atomic.Value     // func() (sig string, render func() [][]byte)
+	deckSyncing atomic.Bool      // a deck upload is in flight (see SyncDeck)
 
 	mu  sync.Mutex
-	ble bleLink // nil until a device is bonded (see ble.go)
+	ble bleLink    // nil until a device is bonded (see ble.go)
+	dev *BLEDevice // in-memory bonded record (Deck/Sig cache); nil when none
 }
 
 // SetOnTouch registers a callback for TOUCH: events from the device.
 func (l *Light) SetOnTouch(f func(kind string)) { l.onTouch.Store(f) }
 
+// SetOnRoulette registers a callback for ROULETTE:<slot> events — the deck
+// slot the emoji roulette settled on (see Spin).
+func (l *Light) SetOnRoulette(f func(slot int)) { l.onRoulette.Store(f) }
+
+// SetDeckSource registers the roulette-deck source: it returns a cheap
+// signature of the current deck plus a render closure. On every BLE connect
+// the signature gates whether rendering and a sync are needed (see SyncDeck
+// and handleBLEConnect).
+func (l *Light) SetDeckSource(f func() (sig string, render func() [][]byte)) {
+	l.deckSource.Store(f)
+}
+
 func NewLight() *Light {
 	l := &Light{}
 	l.serial = newSerialTransport(l.handleTouch)
 	l.usb = l.serial
-	if dev := loadBLEDevice(); dev.ID != "" {
-		l.ble = newBLELink(dev.ID, l.handleBLEEvent)
+	if dev := loadBLEDevice(); dev != nil {
+		l.dev = dev
+		l.ble = newBLELink(dev.ID, l.handleBLEEvent, l.handleBLEConnect)
 	}
 	return l
 }
@@ -84,14 +102,30 @@ func parseVersion(v string) (version, board string) {
 
 // handleBLEEvent parses a device line from the BLE transport: the VERSION
 // banner is stored as the BLE device's own state (the serial transport keeps
-// its own — see serialTransport.handleLine), TOUCH events are dispatched.
+// its own — see serialTransport.handleLine), TOUCH and ROULETTE events are
+// dispatched.
 func (l *Light) handleBLEEvent(line string) {
 	if v, ok := strings.CutPrefix(line, "VERSION:"); ok {
 		ver, board := parseVersion(v)
 		l.bleVersion.Store(ver)
 		l.bleBoard.Store(board)
 	}
+	l.handleRoulette(line)
 	l.handleTouch(line)
+}
+
+// handleRoulette dispatches a ROULETTE:<slot> winner event to the registered
+// callback.
+func (l *Light) handleRoulette(line string) {
+	if s, ok := strings.CutPrefix(line, "ROULETTE:"); ok {
+		slot, err := strconv.Atoi(s)
+		if err != nil {
+			return
+		}
+		if f, _ := l.onRoulette.Load().(func(int)); f != nil {
+			go f(slot)
+		}
+	}
 }
 
 // handleTouch dispatches a TOUCH: event line to the registered callback.

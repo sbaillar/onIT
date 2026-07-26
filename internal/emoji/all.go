@@ -3,6 +3,7 @@ package emoji
 import (
 	"bytes"
 	"embed"
+	"encoding/base64"
 	"fmt"
 	"image"
 	"image/draw"
@@ -39,18 +40,72 @@ func (e Entry) PNG() []byte {
 
 // Payload returns the EMOJI: wire payload, resized to Size x Size on black.
 func (e Entry) Payload() (string, error) {
+	raw, err := e.RGB565()
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(raw), nil
+}
+
+// RGB565 returns the raw Size x Size RGB565 pixels, resized on black — the
+// deck-slot wire format (Payload is the same image, base64 encoded).
+func (e Entry) RGB565() ([]byte, error) {
 	b := e.PNG()
 	if b == nil {
-		return "", fmt.Errorf("no artwork for %s", e.Slug)
+		return nil, fmt.Errorf("no artwork for %s", e.Slug)
 	}
 	src, _, err := image.Decode(bytes.NewReader(b))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	dst := image.NewRGBA(image.Rect(0, 0, Size, Size))
 	draw.Draw(dst, dst.Bounds(), image.Black, image.Point{}, draw.Src)
 	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), xdraw.Over, nil)
-	return rgb565Base64(dst), nil
+	return rgb565Raw(dst), nil
+}
+
+// slugIndex maps every emoji's stable slug to its entry (built once).
+var slugIndex = sync.OnceValue(func() map[string]Entry {
+	all := All()
+	m := make(map[string]Entry, len(all))
+	for _, e := range all {
+		m[e.Slug] = e
+	}
+	return m
+})
+
+// DeckEntries resolves slugs to their emoji entries for the roulette deck,
+// dropping unknown slugs and capping at n.
+func DeckEntries(slugs []string, n int) []Entry {
+	index := slugIndex()
+	var out []Entry
+	for _, s := range slugs {
+		if len(out) == n {
+			break
+		}
+		if e, ok := index[s]; ok {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// DeckImages renders slugs into raw RGB565 images for the roulette deck,
+// dropping unknown slugs (via DeckEntries) and any that fail to render,
+// capped at n. The returned entries correspond 1:1 with the images by
+// construction, so the roulette winner slot indexes either identically.
+func DeckImages(slugs []string, n int) ([]Entry, [][]byte) {
+	var entries []Entry
+	var images [][]byte
+	for _, e := range DeckEntries(slugs, n) {
+		raw, err := e.RGB565()
+		if err != nil {
+			continue
+		}
+		entries = append(entries, e)
+		images = append(images, raw)
+	}
+	return entries, images
 }
 
 // notoFile converts a gomoji codepoint list ("1F468 200D 1F469") to the

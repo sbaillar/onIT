@@ -25,6 +25,7 @@ type Status struct {
 	Transport      string // live link: "ble", "usb", "" while disconnected
 	BLEBonded      bool   // a BLE busylight is paired
 	PairingLost    bool   // bonded device refused the encrypted link; re-pair
+	DeckSyncing    bool   // roulette deck upload in flight (see Light.SyncDeck)
 }
 
 // Agent drives the light from Teams presence, with an optional manual override.
@@ -125,6 +126,7 @@ func (a *Agent) statusLocked() Status {
 		Transport:      a.light.Transport(),
 		BLEBonded:      a.light.BLEBonded(),
 		PairingLost:    a.light.PairingLost(),
+		DeckSyncing:    a.light.DeckSyncing(),
 	}
 }
 
@@ -148,6 +150,27 @@ func (a *Agent) ShowEmoji(payloadB64 string) bool {
 	a.wake()
 	return ok
 }
+
+// SetDeckSource registers the source for the emoji roulette deck; the light
+// syncs it to the BLE device on connect (see Light.SetDeckSource).
+func (a *Agent) SetDeckSource(f func() (sig string, render func() [][]byte)) {
+	a.light.SetDeckSource(f)
+}
+
+// SetOnRoulette registers a callback for the roulette winner slot
+// (see Light.SetOnRoulette).
+func (a *Agent) SetOnRoulette(f func(slot int)) { a.light.SetOnRoulette(f) }
+
+// Spin starts the emoji roulette on the device (see Light.Spin).
+func (a *Agent) Spin() error { return a.light.Spin() }
+
+// ProvisionWiFi sends Wi-Fi credentials to the bonded BLE device
+// (see Light.ProvisionWiFi).
+func (a *Agent) ProvisionWiFi(ssid, pass string) error { return a.light.ProvisionWiFi(ssid, pass) }
+
+// PushTimezone sends the Mac's timezone to the bonded BLE device
+// (see Light.PushTimezone).
+func (a *Agent) PushTimezone() error { return a.light.PushTimezone() }
 
 // PairBLE scans for BLE busylights and pairs with the one choose accepts
 // (see Light.PairBLE). Blocks until pairing finishes or ctx is cancelled.

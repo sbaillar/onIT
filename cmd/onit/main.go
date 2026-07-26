@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -76,6 +77,22 @@ func main() {
 	}
 
 	agent := busylight.NewAgent()
+	// roulette deck: the top-picked emojis, synced to the BLE device on
+	// connect. The source reports a cheap signature (the capped known slugs)
+	// so an unchanged deck skips rendering; the render closure materializes
+	// one deck that both the sync and the roulette winner lookup consume.
+	agent.SetDeckSource(func() (string, func() [][]byte) {
+		slugs := topEmojiSlugs(a.Preferences().StringList(emojiUsageKey), busylight.DeckSlots)
+		known := emoji.DeckEntries(slugs, busylight.DeckSlots)
+		sig := make([]string, len(known))
+		for i, e := range known {
+			sig[i] = e.Slug
+		}
+		return strings.Join(sig, "\x00"), func() [][]byte {
+			_, images := emoji.DeckImages(slugs, busylight.DeckSlots)
+			return images
+		}
+	})
 
 	w := a.NewWindow("onIT")
 	w.SetFixedSize(true)
@@ -388,6 +405,16 @@ func main() {
 	pairItem := fyne.NewMenuItem("Pair busylight...", func() { w.Show(); showBLEPair(a, agent, w) })
 	lostItem := fyne.NewMenuItem("Pairing lost - re-pair...", func() { w.Show(); showBLEPair(a, agent, w) })
 	forgetItem := fyne.NewMenuItem("Forget device", func() { agent.ForgetBLE() })
+	spinItem := fyne.NewMenuItem("Spin the wheel", func() {
+		go func() {
+			if err := agent.Spin(); err != nil {
+				log.Printf("spin failed: %v", err)
+			}
+		}()
+	})
+	wifiItem := fyne.NewMenuItem("Set up clock Wi-Fi...", func() { w.Show(); showWiFiSetup(a, agent, w) })
+	syncItem := fyne.NewMenuItem("syncing emojis...", nil)
+	syncItem.Disabled = true // indicator line, not clickable (renders dimmed)
 
 	menuTail := []*fyne.MenuItem{
 		fyne.NewMenuItemSeparator(),
@@ -406,6 +433,12 @@ func main() {
 			transportItem.Label = "—"
 		}
 		dev := []*fyne.MenuItem{fyne.NewMenuItemSeparator(), transportItem}
+		if st.DeckSyncing {
+			dev = append(dev, syncItem)
+		}
+		if st.Transport == "ble" {
+			dev = append(dev, spinItem, wifiItem)
+		}
 		if st.PairingLost {
 			dev = append(dev, lostItem)
 		}
@@ -416,6 +449,35 @@ func main() {
 		trayMenu.Items = append(append(append([]*fyne.MenuItem{}, menuItems...), dev...), menuTail...)
 	}
 	rebuildTray(agent.Status())
+	// roulette winner: nothing intrusive - the "Spin the wheel" line briefly
+	// shows which emoji the wheel settled on, then reverts
+	var spinRevert *time.Timer // pending revert of the winner line (UI thread only)
+	agent.SetOnRoulette(func(slot int) {
+		// resolve slot against the current deck, derived the same way the
+		// device's deck was (entries correspond 1:1 with the synced images by
+		// construction — see emoji.DeckImages). Computed at event time rather
+		// than cached, so it survives an app restart with an unchanged deck.
+		deck := emoji.DeckEntries(topEmojiSlugs(a.Preferences().StringList(emojiUsageKey), busylight.DeckSlots), busylight.DeckSlots)
+		if slot < 0 || slot >= len(deck) {
+			return
+		}
+		e := deck[slot]
+		fyne.Do(func() {
+			if spinRevert != nil {
+				spinRevert.Stop() // a newer winner supersedes any pending revert
+			}
+			spinItem.Label = "Spin the wheel - " + e.Name
+			spinItem.Icon = fyne.NewStaticResource(e.Slug+".png", e.PNG())
+			trayMenu.Refresh()
+			spinRevert = time.AfterFunc(5*time.Second, func() {
+				fyne.Do(func() {
+					spinItem.Label = "Spin the wheel"
+					spinItem.Icon = nil
+					trayMenu.Refresh()
+				})
+			})
+		})
+	})
 	desk, isDesk := a.(desktop.App)
 	if isDesk {
 		desk.SetSystemTrayMenu(trayMenu) // Fyne appends Quit

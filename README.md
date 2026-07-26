@@ -54,6 +54,18 @@ state buttons, connection status, firmware updates, start-at-login).
 Manual states override Teams until you click **Auto (Teams)**; the app
 returns to Auto on restart.
 
+## Standalone mode (1.75" AMOLED)
+
+With no computer connected, the wireless board shows a themed **analog
+clock** instead of going dark. Give it Wi-Fi once (tray → **Set up clock
+Wi-Fi…**, sent over the encrypted BLE link, stored only on the device) and
+it keeps NTP-accurate time through power loss and DST. **Emoji roulette**:
+tap the clock to spin a wheel of your top emojis (synced to the device in
+the background) — fast cycling eases out over ~5 s and the winner stays
+until you spin again or the computer reconnects. "Spin the wheel" in the
+tray does the same while connected. Pairing mode: hold the face for 10
+seconds (a progress ring fills), then pair from the tray within 2 minutes.
+
 ## States
 
 | State | Trigger (Auto) | Display |

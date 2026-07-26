@@ -13,27 +13,57 @@
  *             EMOJI:<base64>            (120x120 RGB565 LE image, pixel-
  *             quadrupled to fill the screen; shown
  *             immediately and kept alive by STATE:emoji heartbeats)
+ *             SPIN                       (start the emoji roulette)
  *             VERSION                    (query firmware version)
  * Serial out: VERSION:x.y.z:amoled175  (at boot and on VERSION query)
  *             TOUCH:TAP / TOUCH:LONG   (screen tapped / long-pressed;
  *             the host decides what they mean)
+ *             ROULETTE:<slot>          (the roulette wheel settled on <slot>)
  *
  * BLE       : NimBLE GATT server, one service, three characteristics, all
  *             requiring an encrypted bonded link (LE Secure Connections,
  *             DisplayOnly — 6-digit passkey shown full-screen while pairing):
- *               Command (write)  same text lines as serial (STATE:*, VERSION)
- *               Emoji   (write)  8-byte header (offset u32, total u16, seq u16,
- *                                little-endian) + raw RGB565 chunk (<=504 B);
- *                                reassembled by offset, discarded on disconnect
- *                                or 2 s inter-chunk timeout
- *               Events  (notify) TOUCH:TAP / TOUCH:LONG / VERSION:x.y.z:amoled175
+ *               Command (write)  same text lines as serial (STATE:*, SPIN,
+ *                                VERSION) plus config lines WIFI:<ssid>\t
+ *                                <password>, TZ:<posix-tz>, DECK:<count>
+ *                                (stored in NVS, never readable back).
+ *               Emoji   (write)  v2 10-byte header (offset u32, total u16,
+ *                                seq u16, slot u8, flags u8, little-endian) +
+ *                                raw RGB565 chunk (<=502 B); reassembled by
+ *                                offset, discarded on disconnect or 2 s
+ *                                inter-chunk timeout. total must be 28800.
+ *                                slot 0xFF = display now; slot 0..19 = store
+ *                                into deck slot N in LittleFS (/deck/N.rgb);
+ *                                flags bit0 = last chunk of a deck sync.
+ *               Events  (notify) TOUCH:TAP / TOUCH:LONG / ROULETTE:<slot> /
+ *                                VERSION:x.y.z:amoled175
  *             Advertised name onIT-AMOLED-<last4 of BT MAC>. Pairable only the
- *             first 5 minutes after boot or for 5 minutes after a long-press;
- *             pairing attempts outside the window are rejected (disconnected).
+ *             first 5 minutes after boot or while in pairing mode, entered by a
+ *             10 s finger-hold on the face (a green progress ring fills from ~2 s
+ *             to 10 s; releasing early cancels it). Pairing mode shows a pairing
+ *             screen + full-screen passkey and exits on success, a 2-minute
+ *             timeout, or another 10 s hold. Pairing attempts outside these are
+ *             rejected (disconnected).
+ * Standalone: with no live host (the OFF/STALE condition) the panel shows an
+ *             analog clock. Time comes from SNTP (pool.ntp.org) over Wi-Fi
+ *             station mode — connect at boot and hourly, sync, disconnect to
+ *             minimize BLE coex load. TZ applied from the stored POSIX string.
+ *             Until the first sync: dimmed face, no hands. A tap spins the
+ *             emoji roulette (5 s ease-out through the LittleFS deck, winner
+ *             stays until the next spin or a host takes over).
  * Watchdog  : USB only: no serial for 5s -> OFF/STALE (except FLASHING: sticky,
  *             shown until the flash reset - the port is closed during esptool).
  *             While BLE is connected the link itself is the liveness signal;
- *             BLE disconnect -> OFF/STALE (except FLASHING).
+ *             BLE disconnect -> OFF/STALE (except FLASHING and a roulette
+ *             winner, which persists standalone).
+ *
+ * PARTITIONS: partitions.csv next to this sketch defines the 16MB layout
+ * (6.25MB app slots + a 3.3MB "spiffs"-labeled partition that LittleFS
+ * formats/mounts for the emoji deck — 20 slots need 576 KB). The Wi-Fi stack
+ * pushes the app past the stock 4MB scheme's 1.25MB slot, so this sketch MUST
+ * be built with FlashSize=16M,PartitionScheme=custom in the FQBN
+ * (PartitionScheme=custom makes arduino-cli use the sketch-local
+ * partitions.csv) — the Makefile firmware target does this.
  *
  * NOTE ON PINS: values below match the Waveshare demo for this board
  * (github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.75, pin_config.h).
@@ -41,7 +71,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75 for your revision.
  */
 
-#define FW_VERSION "1.0.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.1.0"   // extracted by `make firmware`, embedded in onIT
 
 #include <Arduino_GFX_Library.h>
 #include <Adafruit_GFX.h>   // only for its Fonts/ include path
@@ -49,6 +79,11 @@
 #include <NimBLEDevice.h>
 #include <TouchDrv.hpp>     // SensorLib: CST9217 over I2C
 #include <esp_mac.h>
+#include <WiFi.h>
+#include <LittleFS.h>
+#include <Preferences.h>
+#include <time.h>
+#include <esp_sntp.h>
 #include <Fonts/FreeSansBold24pt7b.h>
 #include <Fonts/FreeSansBold18pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
@@ -72,6 +107,8 @@
 #define SCREEN_W  466
 #define CENTER    233
 #define RING_R    222          // outer ring radius (114 scaled 240->466)
+#define PROG_R    222          // hold-to-pair progress ring radius (overlays the edge)
+#define PROG_W    6            // progress ring thickness (thin)
 
 // ---------------------------------------------------------------- BLE
 // "6f6e4954" = "onIT", "0175" = 1.75". Host must use the same UUIDs.
@@ -80,7 +117,16 @@
 #define BLE_UUID_EMO "6f6e4954-0175-4b1e-8001-000000000003"
 #define BLE_UUID_EVT "6f6e4954-0175-4b1e-8001-000000000004"
 
-#define PAIR_WINDOW_MS (5UL * 60UL * 1000UL)
+// Emoji write wire format: 10-byte header, then a raw RGB565 payload chunk.
+#define EMO_HDR_LEN        10     // offset u32, total u16, seq u16, slot u8, flags u8
+#define EMO_SLOT_LIVE      0xFF   // slot 0xFF = display now (else 0..DECK_MAX-1)
+#define EMO_FLAG_DECK_LAST 0x01   // flags bit0 = last chunk of a deck sync
+
+#define PAIR_WINDOW_MS (5UL * 60UL * 1000UL)   // pairable window after boot
+#define PAIR_MODE_MS   (2UL * 60UL * 1000UL)   // pairing-mode auto-exit timeout
+#define HOLD_LONG_MS   600UL                    // release under this = TAP, over = LONG
+#define HOLD_RING_MS   2000UL                   // progress ring starts filling here
+#define HOLD_PAIR_MS   10000UL                  // full hold toggles pairing mode
 
 // ---------------------------------------------------------------- palette (RGB565 from spec)
 #define C_BG_IDLE     0x1083  // #101018
@@ -115,7 +161,8 @@ Arduino_CO5300 *gfx = new Arduino_CO5300(
 TouchDrvCST92xx touch;
 bool touchOk = false;
 
-enum State { ST_OFF, ST_AVAILABLE, ST_MEETING, ST_SHARING, ST_FLASHING, ST_CUSTOM, ST_EMOJI };
+enum State { ST_OFF, ST_AVAILABLE, ST_MEETING, ST_SHARING, ST_FLASHING, ST_CUSTOM, ST_EMOJI,
+             ST_ROULETTE_SPIN, ST_ROULETTE_WINNER };
 State state = ST_OFF;
 
 unsigned long lastCmd      = 0;
@@ -131,8 +178,12 @@ NimBLECharacteristic *evtChr = nullptr;
 volatile int bleConns = 0;
 volatile bool bleDropped = false;           // a disconnect happened
 unsigned long pairableUntil = PAIR_WINDOW_MS;
-volatile uint32_t pendingPasskey = 0;       // != 0 -> show pairing screen
+volatile uint32_t pendingPasskey = 0;       // != 0 -> draw the passkey screen once
+volatile uint32_t shownPasskey = 0;         // passkey currently on the panel (0 = none)
 volatile bool pairingDone = false;          // auth finished -> redraw state
+volatile bool pairingMode = false;          // in the 10s-hold pairing mode
+unsigned long pairingModeUntil = 0;         // pairing-mode 2-minute timeout
+char bleName[24] = "";                       // advertised name, shown when pairing
 uint16_t lastConnHandle = BLE_HS_CONN_HANDLE_NONE;
 
 portMUX_TYPE bleMux = portMUX_INITIALIZER_UNLOCKED;
@@ -148,6 +199,34 @@ uint8_t emojiRx[sizeof(emojiBuf)];
 volatile uint32_t emojiRxCount = 0;
 volatile bool emojiRxReady = false;
 volatile unsigned long emojiRxLast = 0;
+volatile uint8_t emojiRxSlot = EMO_SLOT_LIVE;  // v2 header: 0xFF = display now
+volatile uint8_t emojiRxFlags = 0;          // bit0 = last chunk of a deck sync
+
+// ---- emoji deck (LittleFS /deck/N.rgb, raw 28800-byte RGB565 images)
+#define DECK_MAX 20
+uint8_t deckSlots[DECK_MAX];                // slot numbers with a valid file
+uint8_t deckN = 0;
+static uint8_t deckSave[sizeof(emojiBuf)];  // staging so emojiBuf never tears
+uint16_t *deckCache[DECK_MAX] = {nullptr};  // PSRAM copy of each slot: spin never hits flash
+
+// ---- config (Preferences/NVS: Wi-Fi creds + POSIX TZ, never readable back)
+Preferences prefs;
+String wifiSsid, wifiPass, tzStr;
+
+// ---- SNTP over on-demand Wi-Fi (boot + hourly, then radio off for coex)
+enum NtpPhase { NTP_IDLE, NTP_WIFI, NTP_SYNC };
+NtpPhase ntpPhase = NTP_IDLE;
+unsigned long ntpNext = 0, ntpPhaseAt = 0;
+volatile bool ntpSynced = false;            // time valid = synced since boot
+volatile bool ntpRound = false;             // this connect cycle synced
+
+// ---- standalone clock / roulette / toast
+float prevHA, prevMA, prevSA;               // last-drawn hand angles (erase)
+bool prevHandsValid = false;
+unsigned long toastUntil = 0;
+unsigned long rouletteStart = 0, rouletteNext = 0;
+float rouletteIval = 60.0f;
+uint8_t rouletteWinner = 0, rouletteIdx = 0;
 
 // ---------------------------------------------------------------- brightness (AMOLED: panel command, no backlight pin)
 void brightness(uint8_t pct) {         // 0-100
@@ -157,15 +236,6 @@ void brightness(uint8_t pct) {         // 0-100
 // ---------------------------------------------------------------- helpers
 void ringSolid(int16_t r, int16_t w, uint16_t color) {
   gfx->fillArc(CENTER, CENTER, r, r - w, 0, 360, color);
-}
-
-// dashed ring: nSeg segments of onDeg, gap fills the rest of the pitch
-void ringDashed(int16_t r, int16_t w, uint16_t color, int nSeg, float onDeg) {
-  float pitch = 360.0f / nSeg;
-  for (int i = 0; i < nSeg; i++) {
-    float a0 = i * pitch;
-    gfx->fillArc(CENTER, CENTER, r, r - w, a0, a0 + onDeg, color);
-  }
 }
 
 // cy = vertical center of the rendered text (GFX free fonts draw from baseline)
@@ -374,11 +444,180 @@ void drawFlashing() {
   brightness(100);
 }
 
-void drawOff() {
-  gfx->fillScreen(C_BLACK);
-  ringDashed(RING_R, 6, C_GRAY_RING, 48, 3.5f);          // fine dotted ring
-  textCentered("- -", 241, &FreeSansBold12pt7b, C_GRAY_TEXT);
-  brightness(12);                                        // dim but visible
+// ---- standalone analog clock (replaces the old "- -" OFF screen)
+
+// hand from CENTER: tail px behind the pivot, len px ahead, 2*halfW+1 px wide
+void handLine(float ang, int tail, int len, int halfW, uint16_t color) {
+  float dx = sinf(ang), dy = -cosf(ang);   // 0 = 12 o'clock, clockwise
+  float px = cosf(ang), py = sinf(ang);    // perpendicular, for thickness
+  for (int i = -halfW; i <= halfW; i++)
+    gfx->drawLine(CENTER + px * i - dx * tail, CENTER + py * i - dy * tail,
+                  CENTER + px * i + dx * len, CENTER + py * i + dy * len, color);
+}
+
+// erase-and-redraw hands only: no full-screen repaint, no flicker.
+// Hands stay inside r=190; ticks start at r=192, so erasing never chips them.
+void drawClockHands() {
+  time_t now = time(nullptr);
+  struct tm t;
+  localtime_r(&now, &t);
+  float sa = t.tm_sec * 6 * DEG_TO_RAD;
+  float ma = (t.tm_min + t.tm_sec / 60.0f) * 6 * DEG_TO_RAD;
+  float ha = (t.tm_hour % 12 + t.tm_min / 60.0f) * 30 * DEG_TO_RAD;
+  if (prevHandsValid) {
+    handLine(prevSA, 30, 176, 2, C_BG_IDLE);
+    handLine(prevMA, 24, 150, 4, C_BG_IDLE);
+    handLine(prevHA, 24, 104, 6, C_BG_IDLE);
+  }
+  handLine(ha, 24, 104, 6, C_WHITE);
+  handLine(ma, 24, 150, 4, C_LAVENDER);
+  handLine(sa, 30, 176, 2, C_GREEN);
+  gfx->fillCircle(CENTER, CENTER, 12, C_LAVENDER);       // center hub
+  gfx->fillCircle(CENTER, CENTER, 5, C_BG_IDLE);
+  prevHA = ha; prevMA = ma; prevSA = sa;
+  prevHandsValid = true;
+}
+
+void drawClock() {
+  gfx->fillScreen(C_BG_IDLE);
+  for (int i = 0; i < 60; i++) {                         // minute ticks
+    float a = i * 6 * DEG_TO_RAD;
+    float dx = sinf(a), dy = -cosf(a);
+    if (i % 5 == 0) {                                    // hour marks, 3px
+      float px = cosf(a), py = sinf(a);
+      for (int o = -1; o <= 1; o++)
+        gfx->drawLine(CENTER + px * o + dx * 192, CENTER + py * o + dy * 192,
+                      CENTER + px * o + dx * 214, CENTER + py * o + dy * 214, C_LAVENDER);
+    } else {
+      gfx->drawLine(CENTER + dx * 204, CENTER + dy * 204,
+                    CENTER + dx * 214, CENTER + dy * 214, C_GRAY_RING);
+    }
+  }
+  prevHandsValid = false;
+  if (ntpSynced) {
+    drawClockHands();
+    brightness(35);
+  } else {
+    brightness(10);                                      // dimmed face, no hands
+  }
+}
+
+// 1 Hz hand update while the clock is showing (polled at most every 200 ms so
+// the common case never touches time()/localtime_r)
+void clockTick() {
+  static unsigned long lastTick = 0;
+  static int lastSec = -1;
+  if (millis() - lastTick < 200) return;
+  lastTick = millis();
+  time_t now = time(nullptr);
+  struct tm t;
+  localtime_r(&now, &t);
+  if (t.tm_sec == lastSec && prevHandsValid) return;
+  lastSec = t.tm_sec;
+  drawClockHands();
+}
+
+// brief message over the clock face; face repainted when it expires
+void drawToast(const char *msg) {
+  gfx->fillCircle(CENTER, CENTER, 170, C_BG_IDLE);       // wipes hands too
+  textCentered(msg, 233, &FreeSansBold9pt7b, C_YELLOW);
+  brightness(35);
+  prevHandsValid = false;
+  toastUntil = millis() + 2000;
+}
+
+// ---- emoji deck (LittleFS) & roulette
+
+const char *deckPath(uint8_t slot) {
+  static char p[20];
+  snprintf(p, sizeof(p), "/deck/%u.rgb", slot);
+  return p;
+}
+
+// copy an image into the PSRAM cache for slot; no-op if PSRAM is unavailable
+void deckCachePut(uint8_t slot, const uint8_t *data) {
+  if (slot >= DECK_MAX) return;
+  if (!deckCache[slot]) deckCache[slot] = (uint16_t *)ps_malloc(sizeof(emojiBuf));
+  if (deckCache[slot]) memcpy(deckCache[slot], data, sizeof(emojiBuf));
+}
+
+void deckScan() {
+  deckN = 0;
+  for (uint8_t i = 0; i < DECK_MAX; i++) {
+    File f = LittleFS.open(deckPath(i), "r");
+    bool present = f && f.size() == sizeof(emojiBuf);   // skip torn writes
+    if (present) {
+      deckSlots[deckN++] = i;
+      if (!deckCache[i]) {                              // load once into PSRAM
+        uint16_t *buf = (uint16_t *)ps_malloc(sizeof(emojiBuf));
+        if (buf) {
+          if (f.read((uint8_t *)buf, sizeof(emojiBuf)) == sizeof(emojiBuf)) deckCache[i] = buf;
+          else free(buf);                               // torn read: serve from flash
+        }
+      }
+    } else if (deckCache[i]) {                          // slot gone: drop its cache
+      free(deckCache[i]);
+      deckCache[i] = nullptr;
+    }
+    if (f) f.close();
+  }
+}
+
+bool deckLoad(uint8_t slot) {
+  if (slot < DECK_MAX && deckCache[slot]) {             // cache hit: no flash I/O
+    memcpy(emojiBuf, deckCache[slot], sizeof(emojiBuf));
+    return true;
+  }
+  File f = LittleFS.open(deckPath(slot), "r");
+  if (!f) return false;
+  size_t n = f.read((uint8_t *)emojiBuf, sizeof(emojiBuf));
+  f.close();
+  return n == sizeof(emojiBuf);
+}
+
+void deckStore(uint8_t slot, uint8_t flags) {
+  File f = LittleFS.open(deckPath(slot), "w");
+  if (f) {
+    f.write(deckSave, sizeof(deckSave));
+    f.close();
+  }
+  deckCachePut(slot, deckSave);                         // keep the spin cache current
+  if (flags & EMO_FLAG_DECK_LAST) deckScan();           // deck sync done: refresh the index
+}
+
+void startSpin() {
+  if (pairingMode || state == ST_ROULETTE_SPIN) return;
+  if (deckN == 0) {
+    if (state == ST_OFF) drawToast("no emojis synced");
+    return;
+  }
+  rouletteWinner = deckSlots[esp_random() % deckN];      // uniform winner
+  rouletteIdx = esp_random() % deckN;
+  rouletteIval = 60.0f;
+  rouletteStart = millis();
+  rouletteNext = rouletteStart;
+  state = ST_ROULETTE_SPIN;
+  lastStateChg = millis();
+}
+
+void roulettePoll() {
+  if (state != ST_ROULETTE_SPIN) return;
+  unsigned long now = millis();
+  if (now < rouletteNext) return;
+  if (now - rouletteStart >= 5000) {                     // settle on the winner
+    if (deckLoad(rouletteWinner)) emojiValid = true;
+    state = ST_ROULETTE_WINNER;
+    lastStateChg = millis();
+    redrawState();
+    char ev[16];
+    snprintf(ev, sizeof(ev), "ROULETTE:%u", rouletteWinner);
+    emitEvent(ev);
+    return;
+  }
+  rouletteIdx = (rouletteIdx + 1) % deckN;
+  if (deckLoad(deckSlots[rouletteIdx])) { emojiValid = true; redrawState(); }
+  rouletteIval *= 1.09f;         // ease out: ~60ms frames -> ~0.5s over 5s
+  rouletteNext = now + (unsigned long)rouletteIval;
 }
 
 // full-screen 6-digit passkey while the host's OS shows its pairing dialog
@@ -393,15 +632,33 @@ void drawPairing(uint32_t passkey) {
   brightness(100);
 }
 
+// an overlay (pairing screen or a toast) currently owns the panel: animators
+// must not paint over it. drawPairScreen()/drawToast() forward-declared below.
+void drawPairScreen();
+bool overlayActive() { return pairingMode || toastUntil; }
+
+// states that survive a liveness loss (BLE drop / USB watchdog) instead of
+// falling back to the standalone clock: a flash-in-progress and a roulette.
+bool stateSticky(State s) {
+  return s == ST_FLASHING || s == ST_ROULETTE_SPIN || s == ST_ROULETTE_WINNER;
+}
+
+// the single screen-ownership chokepoint: precedence pairing > toast > state.
+// every non-animator draw goes through here so no other site repaints blindly.
 void redrawState() {
+  if (shownPasskey) { drawPairing(shownPasskey); return; }  // passkey display owns the panel
+  if (pairingMode)  { drawPairScreen(); return; }           // pairing prompt owns it
+  if (toastUntil) return;                           // toast owns it until it expires
   switch (state) {
-    case ST_AVAILABLE: drawAvailable(); break;
-    case ST_MEETING:   drawMeeting();   break;
-    case ST_SHARING:   drawSharing();   break;
-    case ST_FLASHING:  drawFlashing();  break;
-    case ST_CUSTOM:    drawCustom();    break;
-    case ST_EMOJI:     drawEmoji();     break;
-    default:           drawOff();       break;
+    case ST_AVAILABLE:       drawAvailable(); break;
+    case ST_MEETING:         drawMeeting();   break;
+    case ST_SHARING:         drawSharing();   break;
+    case ST_FLASHING:        drawFlashing();  break;
+    case ST_CUSTOM:          drawCustom();    break;
+    case ST_EMOJI:           drawEmoji();     break;
+    case ST_ROULETTE_SPIN:   drawEmoji();     break;  // current spin frame in emojiBuf
+    case ST_ROULETTE_WINNER: drawEmoji();     break;  // settled winner in emojiBuf
+    default:                 drawClock();     break;
   }
 }
 
@@ -410,6 +667,66 @@ void setState(State s) {
   state = s;
   lastStateChg = millis();
   redrawState();
+}
+
+// ---------------------------------------------------------------- pairing gesture & mode
+// progress ring fills clockwise from 12 o'clock. Arduino_GFX angles run
+// clockwise from 3 o'clock, so 12 o'clock is 270 deg; wraps back past the top.
+void arcClockwiseFromTop(int16_t r1, int16_t r2, int deg, uint16_t color) {
+  if (deg <= 0) return;
+  if (deg > 360) deg = 360;
+  float end = 270.0f + deg;
+  if (end <= 360.0f) {
+    gfx->fillArc(CENTER, CENTER, r1, r2, 270.0f, end, color);
+  } else {
+    gfx->fillArc(CENTER, CENTER, r1, r2, 270.0f, 360.0f, color);
+    gfx->fillArc(CENTER, CENTER, r1, r2, 0.0f, end - 360.0f, color);
+  }
+}
+
+// draw/advance the hold-to-pair progress ring; lastDeg tracks the drawn angle
+// so the green fill only repaints when it grows (no flicker).
+void drawProgressRing(unsigned long held, int &lastDeg) {
+  if (lastDeg < 0) ringSolid(PROG_R, PROG_W, C_GRAY_RING);   // gray track, once
+  int deg = (int)(((long)held - (long)HOLD_RING_MS) * 360 / (long)(HOLD_PAIR_MS - HOLD_RING_MS));
+  if (deg < 0) deg = 0; else if (deg > 360) deg = 360;
+  if (deg == lastDeg) return;
+  lastDeg = deg;
+  arcClockwiseFromTop(PROG_R, PROG_R - PROG_W, deg, C_GREEN);
+}
+
+// theme-styled pairing prompt: title + advertised device name
+void drawPairScreen() {
+  gfx->fillScreen(C_BG_IDLE);
+  ringSolid(RING_R, 8, C_GREEN);
+  textCentered("Pair with onIT", 180, &FreeSansBold12pt7b, C_WHITE);
+  textCentered(bleName, 250, &FreeSansBold9pt7b, C_LAVENDER);
+  textCentered("hold 10s to exit", 320, &FreeSansBold9pt7b, C_GRAY_TEXT);
+  brightness(100);
+}
+
+void enterPairing() {
+  if (state == ST_ROULETTE_SPIN) state = ST_ROULETTE_WINNER;  // freeze an in-progress spin
+  pairingMode = true;
+  pairingModeUntil = millis() + PAIR_MODE_MS;
+  drawPairScreen();
+}
+
+void exitPairing() {
+  pairingMode = false;
+  pendingPasskey = 0;
+  shownPasskey = 0;
+  redrawState();                                 // restore clock / winner / presence / off
+}
+
+void togglePairing() {
+  if (pairingMode) exitPairing();
+  else enterPairing();
+}
+
+// restore the screen under a cancelled progress ring
+void restoreScreen() {
+  redrawState();   // handles pairing/toast/state precedence
 }
 
 // ---------------------------------------------------------------- events (serial + BLE notify)
@@ -439,17 +756,48 @@ uint16_t hex565(const String &s, int off) {
 
 void handleLine(const String &line) {
   if (line == "VERSION") { emitEvent("VERSION:" FW_VERSION ":amoled175"); return; }
+  if (line == "SPIN") { startSpin(); return; }
+  // config lines (BLE Config characteristic; also accepted over serial)
+  if (line.startsWith("WIFI:")) {
+    int tab = line.indexOf('\t');
+    if (tab > 5) {
+      wifiSsid = line.substring(5, tab);
+      wifiPass = line.substring(tab + 1);
+      prefs.putString("ssid", wifiSsid);   // NVS only, never readable over BLE
+      prefs.putString("pass", wifiPass);
+      ntpNext = 0;                         // resync with the new credentials
+    }
+    return;
+  }
+  if (line.startsWith("TZ:")) {
+    String tz = line.substring(3);
+    if (tz != tzStr) {                     // no-op if the zone is unchanged
+      tzStr = tz;
+      prefs.putString("tz", tzStr);
+      setenv("TZ", tzStr.c_str(), 1);
+      tzset();
+    }
+    return;
+  }
+  if (line.startsWith("DECK:")) {          // deck size after sync: drop stale slots
+    int n = line.substring(5).toInt();
+    for (int i = max(n, 0); i < DECK_MAX; i++)
+      LittleFS.remove(deckPath(i));
+    deckScan();
+    return;
+  }
   if (line.startsWith("EMOJI:")) {
     lastCmd = millis();
     int n = b64decode(line.substring(6), (uint8_t *)emojiBuf, sizeof(emojiBuf));
     emojiValid = (n == (int)sizeof(emojiBuf));
     state = ST_EMOJI;
     lastStateChg = millis();
-    drawEmoji();
+    redrawState();
     return;
   }
   if (!line.startsWith("STATE:")) return;
   lastCmd = millis();
+  if (state == ST_ROULETTE_SPIN) return;   // host-command policy: STATE:* ignored mid-spin
   String s = line.substring(6); s.trim();
   if (s.startsWith("custom:")) {
     String msg = s.substring(7);
@@ -467,7 +815,7 @@ void handleLine(const String &line) {
       customFg = fg;
       state = ST_CUSTOM;
       lastStateChg = millis();
-      drawCustom();
+      redrawState();
     }
     return;
   }
@@ -475,7 +823,9 @@ void handleLine(const String &line) {
   else if (s == "meeting")   setState(ST_MEETING);
   else if (s == "sharing")   setState(ST_SHARING);
   else if (s == "flashing")  setState(ST_FLASHING);
-  else if (s == "emoji")     setState(ST_EMOJI);
+  else if (s == "emoji") {   // host-command policy: heartbeat must not disturb a roulette winner
+    if (state != ST_ROULETTE_WINNER) setState(ST_EMOJI);
+  }
   else                       setState(ST_OFF);
 }
 
@@ -494,12 +844,13 @@ class ServerCB : public NimBLEServerCallbacks {
     emojiRxCount = 0;               // discard partial image, never tear
     emojiRxReady = false;
     portEXIT_CRITICAL(&bleMux);
+    shownPasskey = 0;              // a cancelled/abandoned pairing drops its passkey
     bleDropped = true;              // loop shows OFF/STALE
   }
 
   // DisplayOnly: we render the passkey, the host types it
   uint32_t onPassKeyDisplay() override {
-    if (millis() > pairableUntil) { // pairing window closed: reject
+    if (millis() > pairableUntil && !pairingMode) { // outside boot window & not pairing: reject
       NimBLEDevice::getServer()->disconnect(lastConnHandle);
       return 0;
     }
@@ -512,6 +863,7 @@ class ServerCB : public NimBLEServerCallbacks {
     if (!connInfo.isEncrypted())
       NimBLEDevice::getServer()->disconnect(connInfo.getConnHandle());
     pendingPasskey = 0;
+    shownPasskey = 0;               // passkey no longer needed
     pairingDone = true;             // loop redraws the current state
   }
 };
@@ -536,18 +888,29 @@ class CmdCB : public NimBLECharacteristicCallbacks {
 class EmojiCB : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *chr, NimBLEConnInfo &connInfo) override {
     NimBLEAttValue v = chr->getValue();
-    if (v.size() < 9) return;
+    if (v.size() < EMO_HDR_LEN + 1) return;   // header + at least one payload byte
     const uint8_t *d = v.data();
+    // v2 header, EMO_HDR_LEN bytes LE: offset u32, total u16, seq u16, slot u8, flags u8
     uint32_t offset = (uint32_t)d[0] | (uint32_t)d[1] << 8 |
                       (uint32_t)d[2] << 16 | (uint32_t)d[3] << 24;
     uint16_t total = (uint16_t)d[4] | (uint16_t)d[5] << 8;  // (seq at d[6..7] unused)
-    uint32_t n = v.size() - 8;
-    if (total != sizeof(emojiBuf) || offset + n > sizeof(emojiBuf)) return;
+    uint8_t slot = d[8], flags = d[9];
+    uint32_t n = v.size() - EMO_HDR_LEN;
+    // bounds: reject before offset+n can wrap u32 (a crafted offset near
+    // 0xFFFFFFFF would otherwise pass and overflow the memcpy target)
+    if (total != sizeof(emojiBuf) || offset > sizeof(emojiBuf) ||
+        n > sizeof(emojiBuf) - offset) return;
+    if (slot != EMO_SLOT_LIVE && slot >= DECK_MAX) return;
     portENTER_CRITICAL(&bleMux);
-    if (offset == 0) emojiRxCount = 0;         // new image restarts assembly
-    memcpy(emojiRx + offset, d + 8, n);
+    if (offset == 0) {                         // new image restarts assembly;
+      emojiRxCount = 0;                        // drop an unconsumed image too,
+      emojiRxReady = false;                    // never persist a torn mix
+    }
+    memcpy(emojiRx + offset, d + EMO_HDR_LEN, n);
     emojiRxCount += n;
     emojiRxLast = millis();
+    emojiRxSlot = slot;
+    emojiRxFlags = flags;
     if (emojiRxCount >= sizeof(emojiBuf)) emojiRxReady = true;
     portEXIT_CRITICAL(&bleMux);
   }
@@ -560,10 +923,9 @@ EmojiCB emojiCB;
 void bleInit() {
   uint8_t mac[6];
   esp_read_mac(mac, ESP_MAC_BT);
-  char name[24];
-  snprintf(name, sizeof(name), "onIT-AMOLED-%02X%02X", mac[4], mac[5]);
+  snprintf(bleName, sizeof(bleName), "onIT-AMOLED-%02X%02X", mac[4], mac[5]);
 
-  NimBLEDevice::init(name);
+  NimBLEDevice::init(bleName);
   NimBLEDevice::setMTU(517);                    // 512 B emoji chunks in one write
   NimBLEDevice::setSecurityAuth(true, true, true);   // bond + MITM + LE Secure Connections
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
@@ -590,9 +952,60 @@ void bleInit() {
 
   NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(BLE_UUID_SVC);
-  adv->setName(name);
+  adv->setName(bleName);
   adv->enableScanResponse(true);
   adv->start();
+}
+
+// ---------------------------------------------------------------- SNTP over on-demand Wi-Fi
+void ntpCb(struct timeval *tv) {   // SNTP task: sticky since-boot + per-cycle flag
+  ntpSynced = true;
+  ntpRound = true;
+}
+
+void ntpDone(bool ok) {            // drop the radio to minimize BLE coex load
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  ntpPhase = NTP_IDLE;
+  // hourly once we have valid time; 5 min retries until the first sync
+  ntpNext = millis() + ((ok || ntpSynced) ? 3600000UL : 300000UL);
+}
+
+void ntpPoll() {
+  // Wi-Fi/BLE coex during scan/connect stalls BLE enough to break deck
+  // uploads or trip the supervision timeout, and the clock is only shown
+  // standalone anyway: never run a cycle while a central is connected, and
+  // abort one the host walked in on. ntpNext keeps sliding so a disconnect
+  // gets a quiet minute for silent reconnects before the radio comes up.
+  if (bleConns > 0) {
+    if (ntpPhase != NTP_IDLE) ntpDone(false);
+    ntpNext = millis() + 60000UL;
+    return;
+  }
+  switch (ntpPhase) {
+    case NTP_IDLE:
+      if (!wifiSsid.length() || millis() < ntpNext) return;
+      WiFi.mode(WIFI_STA);
+      WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+      ntpPhase = NTP_WIFI;
+      ntpPhaseAt = millis();
+      break;
+    case NTP_WIFI:
+      if (WiFi.status() == WL_CONNECTED) {
+        ntpRound = false;
+        // (re)start SNTP and apply the stored POSIX TZ (setenv+tzset inside)
+        configTzTime(tzStr.length() ? tzStr.c_str() : "GMT0", "pool.ntp.org");
+        ntpPhase = NTP_SYNC;
+        ntpPhaseAt = millis();
+      } else if (millis() - ntpPhaseAt > 20000) {
+        ntpDone(false);
+      }
+      break;
+    case NTP_SYNC:
+      if (ntpRound) ntpDone(true);
+      else if (millis() - ntpPhaseAt > 20000) ntpDone(false);
+      break;
+  }
 }
 
 // ---------------------------------------------------------------- touch
@@ -601,27 +1014,51 @@ void touchInit() {
   touchOk = touch.begin(Wire, CST92XX_SLAVE_ADDRESS, TP_SDA, TP_SCL);
 }
 
-// poll for contact; a release under 600ms is a TAP, holding past it a LONG.
-// A long-press also reopens the BLE pairing window.
+// poll for contact. A release under HOLD_LONG_MS is a TAP, a longer release
+// (before the ring) a LONG. From HOLD_RING_MS a green progress ring fills toward
+// HOLD_PAIR_MS; releasing while it shows cancels the gesture (no TAP/LONG) and
+// restores the screen. A full HOLD_PAIR_MS hold toggles BLE pairing mode.
 void touchPoll() {
   static unsigned long lastPoll = 0;
   static bool wasDown = false;
   static unsigned long downAt = 0;
-  static bool longSent = false;
+  static int ringDeg = -1;             // >=0 while the progress ring is showing
+  static bool consumed = false;        // HOLD_PAIR_MS fired: swallow the rest of the touch
   if (!touchOk || millis() - lastPoll < 50) return;
   lastPoll = millis();
   bool down = touch.getTouchPoints().getPointCount() > 0;
-  if (down && !wasDown) {
+
+  if (down && !wasDown) {                        // finger down: start timing
     wasDown = true;
     downAt = millis();
-    longSent = false;
-  } else if (down && !longSent && millis() - downAt >= 600) {
-    longSent = true;
-    pairableUntil = millis() + PAIR_WINDOW_MS;   // pairing gesture
-    emitEvent("TOUCH:LONG");
-  } else if (!down && wasDown) {
+    ringDeg = -1;
+    consumed = false;
+  } else if (down && !consumed) {                // finger held
+    unsigned long held = millis() - downAt;
+    if (held >= HOLD_PAIR_MS) {                  // 10s: enter/leave pairing mode
+      consumed = true;
+      ringDeg = -1;
+      togglePairing();
+    } else if (held >= HOLD_RING_MS) {           // 2s+: grow the progress ring
+      drawProgressRing(held, ringDeg);
+    }
+  } else if (!down && wasDown) {                 // release
     wasDown = false;
-    if (!longSent) emitEvent("TOUCH:TAP");
+    unsigned long held = millis() - downAt;
+    if (consumed) {                              // pairing toggle already handled
+      // nothing
+    } else if (ringDeg >= 0) {                   // ring shown then released early: cancel
+      restoreScreen();
+    } else if (pairingMode) {                    // taps do nothing while pairing
+      // nothing
+    } else if (held >= HOLD_LONG_MS) {
+      emitEvent("TOUCH:LONG");
+    } else {
+      emitEvent("TOUCH:TAP");
+      // standalone (no live host): a tap on the clock or winner spins the wheel
+      bool hostLive = bleConns > 0 || (lastCmd && millis() - lastCmd < 5000);
+      if (!hostLive && (state == ST_OFF || state == ST_ROULETTE_WINNER)) startSpin();
+    }
   }
 }
 
@@ -632,7 +1069,16 @@ void setup() {
   Wire.begin(TP_SDA, TP_SCL);
   gfx->begin();
   touchInit();
-  drawOff();
+  prefs.begin("onit", false);
+  wifiSsid = prefs.getString("ssid", "");
+  wifiPass = prefs.getString("pass", "");
+  tzStr = prefs.getString("tz", "");
+  if (tzStr.length()) { setenv("TZ", tzStr.c_str(), 1); tzset(); }
+  sntp_set_time_sync_notification_cb(ntpCb);
+  LittleFS.begin(true);           // mounts the default "spiffs" data partition
+  LittleFS.mkdir("/deck");
+  deckScan();
+  drawClock();
   bleInit();
   lastCmd = 0;
   Serial.print("VERSION:" FW_VERSION ":amoled175\n");   // boot banner; host resets us on connect
@@ -657,18 +1103,30 @@ void loop() {
     handleLine(String(buf));
   }
 
-  // completed BLE emoji: copy into the display buffer and show it
+  // completed BLE emoji: slot 0xFF -> show it; slot 0..19 -> store in the deck
   if (emojiRxReady) {
+    uint8_t slot, flags;
     portENTER_CRITICAL(&bleMux);
-    memcpy(emojiBuf, emojiRx, sizeof(emojiBuf));
+    slot = emojiRxSlot;
+    flags = emojiRxFlags;
+    memcpy(slot == EMO_SLOT_LIVE ? (uint8_t *)emojiBuf : deckSave, emojiRx, sizeof(emojiBuf));
     emojiRxReady = false;
     emojiRxCount = 0;
     portEXIT_CRITICAL(&bleMux);
-    emojiValid = true;
-    lastCmd = millis();
-    state = ST_EMOJI;
-    lastStateChg = millis();
-    drawEmoji();
+    if (slot == EMO_SLOT_LIVE) {
+      emojiValid = true;
+      lastCmd = millis();
+      state = ST_EMOJI;
+      lastStateChg = millis();
+      redrawState();
+    } else {
+      deckStore(slot, flags);
+      // per-image ack: the host holds the next slot's chunks until this
+      // arrives, so a slow LittleFS write can never tear the rx buffer
+      char ev[16];
+      snprintf(ev, sizeof(ev), "DECKOK:%u", slot);
+      emitEvent(ev);
+    }
   }
 
   // stalled BLE emoji: discard after 2s without a chunk
@@ -680,33 +1138,55 @@ void loop() {
 
   // pairing screen lifecycle (flags set by NimBLE callbacks)
   if (pendingPasskey) {
-    drawPairing(pendingPasskey);
+    shownPasskey = pendingPasskey;   // persists so any repaint restores the passkey
     pendingPasskey = 0;
+    drawPairing(shownPasskey);
   }
   if (pairingDone) {
     pairingDone = false;
-    redrawState();
+    if (pairingMode) exitPairing();   // successful pairing leaves pairing mode
+    else redrawState();
   }
+  if (pairingMode && millis() > pairingModeUntil) exitPairing();   // 2-minute timeout
 
   touchPoll();
+  ntpPoll();
+  roulettePoll();
 
-  // liveness: BLE disconnect -> OFF/STALE; on USB the 5s text watchdog
+  // first SNTP sync while the clock is up: hands appear
+  static bool clockLive = false;
+  if (ntpSynced && !clockLive) {
+    clockLive = true;
+    if (state == ST_OFF) redrawState();
+  }
+
+  // 1 Hz clock hands while standalone (paused under a toast or the pairing screen)
+  if (state == ST_OFF && ntpSynced && !overlayActive()) clockTick();
+
+  // expired toast: repaint the clock face
+  if (toastUntil && millis() > toastUntil) {
+    toastUntil = 0;
+    if (state == ST_OFF) redrawState();
+  }
+
+  // liveness: BLE disconnect -> OFF/STALE (clock); on USB the 5s text watchdog.
+  // A roulette winner persists standalone until the next spin or a host state.
   if (bleDropped) {
     bleDropped = false;
-    if (state != ST_FLASHING) setState(ST_OFF);
+    if (!stateSticky(state)) setState(ST_OFF);
   }
-  if (bleConns == 0 && state != ST_OFF && state != ST_FLASHING &&
+  if (bleConns == 0 && state != ST_OFF && !stateSticky(state) &&
       millis() - lastCmd > 5000) setState(ST_OFF);
 
   // presenting ring pulse: 8-step LUT, 1.5s period, ring redraw only
-  if (state == ST_SHARING) {
+  if (state == ST_SHARING && !overlayActive()) {
     static int lastStep = -1;
     int step = (millis() % 1500) / 187;                  // 1500/8
     if (step != lastStep) { lastStep = step; ringSolid(RING_R, 16, PULSE_LUT[step]); }
   }
 
   // flashing ring pulse: faster, red, 1s period
-  if (state == ST_FLASHING) {
+  if (state == ST_FLASHING && !overlayActive()) {
     static int lastF = -1;
     int step = (millis() % 1000) / 125;                  // 1000/8
     if (step != lastF) { lastF = step; ringSolid(RING_R, 16, FLASH_LUT[step]); }

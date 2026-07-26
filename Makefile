@@ -1,6 +1,6 @@
 APP     := onIT
 ID      := casa.baillargeon.onit
-VERSION := 1.16.1
+VERSION := 1.17.0
 DIST    := dist
 FYNE    := go run fyne.io/tools/cmd/fyne@v1.7.2
 GOFLAGS := -trimpath -ldflags "-s -w"
@@ -10,6 +10,10 @@ ESPTOOL_VERSION := v5.3.1
 ESPTOOL := build/tools/esptool
 ESPTOOL_WIN := build/tools/esptool.exe
 FQBN    := esp32:esp32:esp32s3
+# AMOLED board: 16MB flash + sketch-local partitions.csv (Wi-Fi/LittleFS need
+# more than the stock 4MB scheme's 1.25MB app slot); Octal PSRAM caches the
+# emoji deck so roulette frames never hit flash
+FQBN_AMOLED := esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=custom,PSRAM=opi
 SKETCH  := firmware/busylight_round
 SKETCH_AMOLED := firmware/busylight_round_amoled
 MINGW   := x86_64-w64-mingw32-gcc
@@ -26,15 +30,23 @@ test:
 	go test ./...
 
 # compile both sketches and refresh the images embedded in the app
+# merged.bin is padded with 0xFF to the full flash size (4MB / 16MB); strip the
+# trailing erase-value padding before embedding — esptool writes at 0x0 and the
+# rest of flash stays erased, so a truncated image flashes identically while
+# keeping the embedded blob (and git) to the ~1.4MB of real content.
+TRUNC := python3 -c "import sys;p=sys.argv[1];d=open(p,'rb').read().rstrip(b'\xff');open(p,'wb').write(d)"
+
 firmware:
 	arduino-cli compile --fqbn $(FQBN) --export-binaries $(SKETCH)
 	cp $(SKETCH)/build/esp32.esp32.esp32s3/busylight_round.ino.merged.bin \
 		internal/firmware/firmware.bin
+	$(TRUNC) internal/firmware/firmware.bin
 	sed -n 's/^#define FW_VERSION "\(.*\)".*/\1/p' \
 		$(SKETCH)/busylight_round.ino > internal/firmware/version.txt
-	arduino-cli compile --fqbn $(FQBN) --export-binaries $(SKETCH_AMOLED)
+	arduino-cli compile --fqbn $(FQBN_AMOLED) --export-binaries $(SKETCH_AMOLED)
 	cp $(SKETCH_AMOLED)/build/esp32.esp32.esp32s3/busylight_round_amoled.ino.merged.bin \
 		internal/firmware/firmware_amoled.bin
+	$(TRUNC) internal/firmware/firmware_amoled.bin
 	sed -n 's/^#define FW_VERSION "\(.*\)".*/\1/p' \
 		$(SKETCH_AMOLED)/busylight_round_amoled.ino > internal/firmware/version_amoled.txt
 

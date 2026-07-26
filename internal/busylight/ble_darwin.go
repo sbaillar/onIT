@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,21 +38,24 @@ func bleUUID(s string) bluetooth.UUID {
 // bleTransport drives the bonded AMOLED board over Bluetooth LE.
 // Reconnects lazily on send, like serialTransport.
 type bleTransport struct {
-	mu       sync.Mutex
-	deviceID string // OS peripheral identifier from pairing
-	dev      *bluetooth.Device
-	cmd      bluetooth.DeviceCharacteristic
-	emoji    bluetooth.DeviceCharacteristic
-	nextScan time.Time
-	conn     atomic.Bool
-	lost     atomic.Bool       // bond refused; stop retrying until re-pair
-	onEvent  func(line string) // device lines (VERSION:, TOUCH:) from Events
+	mu        sync.Mutex
+	deviceID  string // OS peripheral identifier from pairing
+	dev       *bluetooth.Device
+	cmd       bluetooth.DeviceCharacteristic
+	emoji     bluetooth.DeviceCharacteristic
+	nextScan  time.Time
+	conn      atomic.Bool
+	lost      atomic.Bool       // bond refused; stop retrying until re-pair
+	onEvent   func(line string) // device lines (VERSION:, TOUCH:, ROULETTE:) from Events
+	onConnect func()            // post-connect pushes (timezone, deck sync); may be nil
+	deckAck   chan byte         // DECKOK:<slot> ack after the device persists a deck image
 }
 
 var _ bleLink = (*bleTransport)(nil)
 
-func newBLELink(deviceID string, onEvent func(line string)) bleLink {
-	return &bleTransport{deviceID: deviceID, onEvent: onEvent}
+func newBLELink(deviceID string, onEvent func(line string), onConnect func()) bleLink {
+	return &bleTransport{deviceID: deviceID, onEvent: onEvent, onConnect: onConnect,
+		deckAck: make(chan byte, 1)}
 }
 
 // bleConnect connects to a peripheral by its stored identifier.
@@ -131,7 +135,18 @@ func (t *bleTransport) ensureLocked() bool {
 		return false
 	}
 	if err := events.EnableNotifications(func(buf []byte) {
-		t.onEvent(strings.TrimSpace(string(buf)))
+		line := strings.TrimSpace(string(buf))
+		// DECKOK acks are transport-internal flow control (see sendDeckImage)
+		if s, ok := strings.CutPrefix(line, "DECKOK:"); ok {
+			if slot, err := strconv.Atoi(s); err == nil {
+				select {
+				case t.deckAck <- byte(slot):
+				default:
+				}
+			}
+			return
+		}
+		t.onEvent(line)
 	}); err != nil {
 		log.Printf("BLE notifications failed: %v", err)
 		dev.Disconnect()
@@ -145,6 +160,9 @@ func (t *bleTransport) ensureLocked() bool {
 	go t.watch(t.dev)
 	// Ask for the version banner; the reply arrives as an Events notification.
 	go t.sendLine("VERSION")
+	if t.onConnect != nil {
+		go t.onConnect()
+	}
 	return true
 }
 
@@ -201,10 +219,37 @@ func (t *bleTransport) sendLine(line string) bool {
 	return true
 }
 
-// sendEmoji streams an RGB565 image over the Emoji characteristic in
+// sendEmoji streams an RGB565 image to the live display (slot 0xFF).
+func (t *bleTransport) sendEmoji(rgb565 []byte) bool {
+	return t.writeEmoji(rgb565, bleSlotLive, false)
+}
+
+// sendDeckImage stores an RGB565 image into a roulette deck slot; lastOfSync
+// flags the final chunk of the whole deck sync so the device may persist its
+// deck index. It waits for the device's DECKOK:<slot> ack — the ATT response
+// only means the last chunk was received; the image is consumed and written
+// to LittleFS later in the device's loop, and streaming the next slot before
+// that would overwrite the rx buffer with a torn mix of two images.
+func (t *bleTransport) sendDeckImage(slot int, rgb565 []byte, lastOfSync bool) bool {
+	select { // drop a stale ack from an aborted earlier sync
+	case <-t.deckAck:
+	default:
+	}
+	if !t.writeEmoji(rgb565, byte(slot), lastOfSync) {
+		return false
+	}
+	select {
+	case got := <-t.deckAck:
+		return got == byte(slot) // a mismatched slot ack is a failure
+	case <-time.After(5 * time.Second):
+		return false
+	}
+}
+
+// writeEmoji streams an RGB565 image over the Emoji characteristic in
 // header-prefixed chunks. The last chunk is written with response so a
 // mid-transfer disconnect surfaces as failure.
-func (t *bleTransport) sendEmoji(rgb565 []byte) bool {
+func (t *bleTransport) writeEmoji(rgb565 []byte, slot byte, lastOfSync bool) bool {
 	if len(rgb565) > 0xFFFF {
 		log.Printf("BLE emoji too large: %d bytes", len(rgb565))
 		return false
@@ -214,7 +259,7 @@ func (t *bleTransport) sendEmoji(rgb565 []byte) bool {
 	if !t.ensureLocked() {
 		return false
 	}
-	chunks := emojiChunks(rgb565)
+	chunks := emojiChunks(rgb565, slot, lastOfSync)
 	for i, c := range chunks {
 		var err error
 		if i == len(chunks)-1 {

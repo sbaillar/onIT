@@ -60,6 +60,11 @@ func FromPNG(b []byte) (string, error) {
 
 // rgb565Base64 converts a Size x Size image to the EMOJI: wire encoding.
 func rgb565Base64(img image.Image) string {
+	return base64.StdEncoding.EncodeToString(rgb565Raw(img))
+}
+
+// rgb565Raw converts a Size x Size image to raw RGB565 little-endian pixels.
+func rgb565Raw(img image.Image) []byte {
 	raw := make([]byte, 0, Size*Size*2)
 	var px [2]byte
 	for y := 0; y < Size; y++ {
@@ -70,5 +75,5 @@ func rgb565Base64(img image.Image) string {
 			raw = append(raw, px[0], px[1])
 		}
 	}
-	return base64.StdEncoding.EncodeToString(raw)
+	return raw
 }
