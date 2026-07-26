@@ -42,12 +42,18 @@ func RGB565Base64(name string) (string, error) {
 	if b == nil {
 		return "", fmt.Errorf("unknown emoji %q", name)
 	}
+	return FromPNG(b)
+}
+
+// FromPNG converts arbitrary PNG bytes (must be Size x Size) to the EMOJI:
+// wire payload — for bench tools; the picker uses RGB565Base64.
+func FromPNG(b []byte) (string, error) {
 	img, _, err := image.Decode(bytes.NewReader(b))
 	if err != nil {
 		return "", err
 	}
 	if img.Bounds().Dx() != Size || img.Bounds().Dy() != Size {
-		return "", fmt.Errorf("emoji %s is %v, want %dx%d", name, img.Bounds().Size(), Size, Size)
+		return "", fmt.Errorf("image is %v, want %dx%d", img.Bounds().Size(), Size, Size)
 	}
 	return rgb565Base64(img), nil
 }

@@ -276,6 +276,14 @@ func main() {
 	fwLbl := widget.NewLabel("Firmware: ...")
 	fwLbl.Importance = widget.LowImportance
 	fwBtn := widget.NewButton("Update firmware", nil)
+	// targetFW is the bundled firmware version for the sensed board; an
+	// unknown board (no banner yet) is assumed to be the 1.28" LCD.
+	targetFW := func(board string) string {
+		if _, v, err := firmware.ForBoard(board); err == nil {
+			return v
+		}
+		return firmware.Version
+	}
 
 	var update func()
 	graphSetupBtn := widget.NewButton("Presence setup...", func() {
@@ -372,13 +380,42 @@ func main() {
 			}, w)
 	}
 
-	menuItems = append(menuItems,
+	// device section: live transport indicator plus BLE pairing. Its rows
+	// come and go with bond state (fyne.MenuItem cannot hide), so the tray
+	// item list is recomposed from menuItems + section + menuTail on update.
+	transportItem := fyne.NewMenuItem("—", nil)
+	transportItem.Disabled = true // indicator line, not clickable (renders dimmed)
+	pairItem := fyne.NewMenuItem("Pair busylight...", func() { w.Show(); showBLEPair(a, agent, w) })
+	lostItem := fyne.NewMenuItem("Pairing lost - re-pair...", func() { w.Show(); showBLEPair(a, agent, w) })
+	forgetItem := fyne.NewMenuItem("Forget device", func() { agent.ForgetBLE() })
+
+	menuTail := []*fyne.MenuItem{
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Check for updates...", func() { w.Show(); checkForUpdates(w) }),
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Uninstall onIT...", doUninstall),
-	)
-	trayMenu := fyne.NewMenu("onIT", menuItems...)
+	}
+	trayMenu := fyne.NewMenu("onIT")
+	rebuildTray := func(st busylight.Status) {
+		switch st.Transport {
+		case "ble":
+			transportItem.Label = "⋆ BLE"
+		case "usb":
+			transportItem.Label = "⚡ USB"
+		default:
+			transportItem.Label = "—"
+		}
+		dev := []*fyne.MenuItem{fyne.NewMenuItemSeparator(), transportItem}
+		if st.PairingLost {
+			dev = append(dev, lostItem)
+		}
+		dev = append(dev, pairItem)
+		if st.BLEBonded {
+			dev = append(dev, forgetItem)
+		}
+		trayMenu.Items = append(append(append([]*fyne.MenuItem{}, menuItems...), dev...), menuTail...)
+	}
+	rebuildTray(agent.Status())
 	desk, isDesk := a.(desktop.App)
 	if isDesk {
 		desk.SetSystemTrayMenu(trayMenu) // Fyne appends Quit
@@ -460,6 +497,7 @@ func main() {
 				stateItems[i].Checked = checked
 			}
 		}
+		rebuildTray(st)        // transport/bond state may have changed
 		refreshTrayShortcuts() // usage/history may have changed
 		trayMenu.Refresh()
 
@@ -468,7 +506,7 @@ func main() {
 			case !st.LightConnected:
 				fwLbl.SetText("Firmware: no device")
 				fwBtn.Disable()
-			case st.DeviceFW == firmware.Version:
+			case st.DeviceFW == targetFW(st.Board):
 				fwLbl.SetText("Firmware " + st.DeviceFW + " - up to date")
 				fwBtn.SetText("Reflash firmware")
 				fwBtn.Importance = widget.LowImportance // usable, not inviting
@@ -479,7 +517,7 @@ func main() {
 				if from == "" {
 					from = "unknown"
 				}
-				fwLbl.SetText("Firmware " + from + " -> " + firmware.Version)
+				fwLbl.SetText("Firmware " + from + " -> " + targetFW(st.Board))
 				fwBtn.SetText("Update firmware")
 				fwBtn.Importance = widget.HighImportance
 				fwBtn.Enable()
@@ -497,9 +535,9 @@ func main() {
 	fwBtn.OnTapped = func() {
 		flashing = true
 		setBusy(true)
-		fwLbl.SetText("Flashing " + firmware.Version + " - do not unplug...")
+		fwLbl.SetText("Flashing " + targetFW(agent.Status().Board) + " - do not unplug...")
 		go func() {
-			err := agent.FlashFirmware(esptoolPath(), firmware.Bin)
+			err := agent.FlashFirmware(esptoolPath(), false)
 			fyne.Do(func() {
 				flashing = false
 				setBusy(false)

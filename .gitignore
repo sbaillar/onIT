@@ -3,6 +3,7 @@ files.zip
 dist/
 build/
 firmware/busylight_round/build/
+firmware/busylight_round_amoled/build/
 docs/superpowers/
 
 # stray go build output (go build ./cmd/onit)

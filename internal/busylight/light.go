@@ -2,6 +2,7 @@ package busylight
 
 import (
 	"bufio"
+	"encoding/base64"
 	"log"
 	"strings"
 	"sync"
@@ -23,22 +24,83 @@ var usbIDs = map[[2]string]bool{
 	{"1A86", "55D3"}: true,
 }
 
-// Light owns the serial port. Reconnects lazily on every send.
+// transport is the link to the device (serial today, BLE later).
+type transport interface {
+	sendLine(line string) bool    // STATE:*, VERSION
+	sendEmoji(rgb565 []byte) bool // binary path (BLE); serial keeps base64 line
+	connected() bool
+	close()
+}
+
+// Light drives the device through a transport. Reconnects lazily on send.
+// The VERSION banner (version + board) is tracked per transport — each side
+// may be a different physical device (e.g. a BLE-bonded AMOLED plus another
+// board on USB), so one must never answer for the other.
 type Light struct {
-	mu        sync.Mutex
-	port      serial.Port
-	portName  string // last successfully opened port; survives Close
-	nextScan  time.Time
-	connected atomic.Bool
-	version   atomic.Value // string: firmware version from VERSION: banner
-	onTouch   atomic.Value // func(string): TOUCH: event callback
+	usb        transport
+	serial     *serialTransport // concrete handle for serial-only PortName
+	bleVersion atomic.Value     // string: version from the BLE device's banner
+	bleBoard   atomic.Value     // string: board from the BLE device's banner
+	onTouch    atomic.Value     // func(string): TOUCH: event callback
+
+	mu  sync.Mutex
+	ble bleLink // nil until a device is bonded (see ble.go)
 }
 
 // SetOnTouch registers a callback for TOUCH: events from the device.
 func (l *Light) SetOnTouch(f func(kind string)) { l.onTouch.Store(f) }
 
 func NewLight() *Light {
-	return &Light{}
+	l := &Light{}
+	l.serial = newSerialTransport(l.handleTouch)
+	l.usb = l.serial
+	if dev := loadBLEDevice(); dev.ID != "" {
+		l.ble = newBLELink(dev.ID, l.handleBLEEvent)
+	}
+	return l
+}
+
+// bleTr returns the current BLE link (nil when no device is bonded).
+func (l *Light) bleTr() bleLink {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.ble
+}
+
+// transports returns the links to try in order per the selection policy.
+func (l *Light) transports() []transport {
+	return orderTransports(l.bleTr(), l.usb)
+}
+
+// parseVersion splits a VERSION banner body into version and board type:
+// "x.y.z:amoled175" is the 1.75" AMOLED board, "x.y.z:lcd128" the 1.28" LCD,
+// and a missing third field is legacy 1.28" firmware.
+func parseVersion(v string) (version, board string) {
+	if ver, b, ok := strings.Cut(v, ":"); ok {
+		return ver, b
+	}
+	return v, "lcd128"
+}
+
+// handleBLEEvent parses a device line from the BLE transport: the VERSION
+// banner is stored as the BLE device's own state (the serial transport keeps
+// its own — see serialTransport.handleLine), TOUCH events are dispatched.
+func (l *Light) handleBLEEvent(line string) {
+	if v, ok := strings.CutPrefix(line, "VERSION:"); ok {
+		ver, board := parseVersion(v)
+		l.bleVersion.Store(ver)
+		l.bleBoard.Store(board)
+	}
+	l.handleTouch(line)
+}
+
+// handleTouch dispatches a TOUCH: event line to the registered callback.
+func (l *Light) handleTouch(line string) {
+	if kind, ok := strings.CutPrefix(line, "TOUCH:"); ok {
+		if f, _ := l.onTouch.Load().(func(string)); f != nil {
+			go f(kind)
+		}
+	}
 }
 
 func findPort() string {
@@ -70,46 +132,141 @@ func ListPorts() {
 	}
 }
 
+// Send writes a state to the device, connecting first if needed.
+// Only the agent's push goroutine calls this; the UI never blocks on it.
+func (l *Light) Send(state string) {
+	l.sendLine("STATE:" + state)
+}
+
+// SendLine writes an arbitrary protocol line (e.g. an EMOJI payload).
+// Blocks until transmitted; large payloads take a couple of seconds.
+func (l *Light) SendLine(line string) bool {
+	return l.sendLine(line)
+}
+
+// sendLine tries each transport in policy order until one accepts the line.
+func (l *Light) sendLine(line string) bool {
+	for _, t := range l.transports() {
+		if t.sendLine(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// Connected reports whether any transport is currently up (lock-free,
+// safe to call from UI threads while a reconnect is in progress).
+func (l *Light) Connected() bool {
+	for _, t := range l.transports() {
+		if t.connected() {
+			return true
+		}
+	}
+	return false
+}
+
+// Version returns the firmware version of the device the light is driving:
+// the BLE device's banner while BLE is connected, the serial device's
+// otherwise ("" if none reported yet, e.g. firmware predating the banner).
+func (l *Light) Version() string {
+	if ble := l.bleTr(); ble != nil && ble.connected() {
+		v, _ := l.bleVersion.Load().(string)
+		return v
+	}
+	return l.serial.bannerVersion()
+}
+
+// Board returns the board type of the same device Version reports
+// ("lcd128", "amoled175", or "" before any VERSION banner).
+func (l *Light) Board() string {
+	if ble := l.bleTr(); ble != nil && ble.connected() {
+		b, _ := l.bleBoard.Load().(string)
+		return b
+	}
+	return l.serial.bannerBoard()
+}
+
+// ClearVersion forgets the serial device's cached banner (called before a
+// flash — which only ever writes over USB — so a lost banner can never leave
+// a stale pre-flash version on display).
+func (l *Light) ClearVersion() {
+	l.serial.clearBanner()
+}
+
+// PortName returns the last successfully opened serial port path, even after
+// Close.
+func (l *Light) PortName() string {
+	return l.serial.lastPortName()
+}
+
+// Close releases the transports (e.g. so esptool can use the serial port).
+func (l *Light) Close() {
+	if ble := l.bleTr(); ble != nil {
+		ble.close()
+	}
+	l.usb.close()
+}
+
+// serialTransport owns the serial port. Reconnects lazily on every send.
+// It keeps its own VERSION banner state so the serial device's identity is
+// never confused with a BLE-connected one (FlashFirmware senses from here).
+type serialTransport struct {
+	mu       sync.Mutex
+	port     serial.Port
+	portName string // last successfully opened port; survives close
+	nextScan time.Time
+	conn     atomic.Bool
+	version  atomic.Value      // string: version from this port's banner
+	board    atomic.Value      // string: board from this port's banner
+	onEvent  func(line string) // device output lines (TOUCH:)
+}
+
+var _ transport = (*serialTransport)(nil)
+
+func newSerialTransport(onEvent func(line string)) *serialTransport {
+	return &serialTransport{onEvent: onEvent}
+}
+
 // ensureLocked opens the port and starts a reader goroutine. Caller holds mu.
-func (l *Light) ensureLocked() bool {
-	if l.port != nil {
+func (t *serialTransport) ensureLocked() bool {
+	if t.port != nil {
 		return true
 	}
-	if time.Now().Before(l.nextScan) {
+	if time.Now().Before(t.nextScan) {
 		return false
 	}
 	name := findPort()
 	if name == "" {
-		l.nextScan = time.Now().Add(scanBackoff)
+		t.nextScan = time.Now().Add(scanBackoff)
 		return false
 	}
 	port, err := serial.Open(name, &serial.Mode{BaudRate: baud})
 	if err != nil {
 		log.Printf("open %s failed: %v", name, err)
-		l.nextScan = time.Now().Add(scanBackoff)
+		t.nextScan = time.Now().Add(scanBackoff)
 		return false
 	}
 	time.Sleep(500 * time.Millisecond) // board may reset on open
-	l.port = port
-	l.portName = name
-	l.connected.Store(true)
+	t.port = port
+	t.portName = name
+	t.conn.Store(true)
 	log.Printf("Serial connected: %s", name)
-	go l.reader(port)
+	go t.reader(port)
 	// The boot banner is easy to miss and the first query can be eaten by
 	// the open-triggered reset, so keep asking until the device answers.
 	go func() {
 		for range 5 {
-			l.mu.Lock()
-			open := l.port == port
+			t.mu.Lock()
+			open := t.port == port
 			if open {
 				port.Write([]byte("VERSION\n"))
 			}
-			l.mu.Unlock()
+			t.mu.Unlock()
 			if !open {
 				return
 			}
 			time.Sleep(2 * time.Second)
-			if v, _ := l.version.Load().(string); v != "" {
+			if t.bannerVersion() != "" {
 				return
 			}
 		}
@@ -119,98 +276,98 @@ func (l *Light) ensureLocked() bool {
 
 // reader watches device output (VERSION banners, TOUCH events) until the
 // port dies.
-func (l *Light) reader(port serial.Port) {
+func (t *serialTransport) reader(port serial.Port) {
 	sc := bufio.NewScanner(port)
 	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if v, ok := strings.CutPrefix(line, "VERSION:"); ok {
-			l.version.Store(v)
-		}
-		if kind, ok := strings.CutPrefix(line, "TOUCH:"); ok {
-			if f, _ := l.onTouch.Load().(func(string)); f != nil {
-				go f(kind)
-			}
-		}
+		t.handleLine(strings.TrimSpace(sc.Text()))
 	}
-	l.drop(port)
+	t.drop(port)
+}
+
+// handleLine parses a device output line: VERSION banners update this port's
+// own banner state, everything else (TOUCH events) goes to onEvent.
+func (t *serialTransport) handleLine(line string) {
+	if v, ok := strings.CutPrefix(line, "VERSION:"); ok {
+		ver, board := parseVersion(v)
+		t.version.Store(ver)
+		t.board.Store(board)
+	}
+	t.onEvent(line)
+}
+
+// bannerVersion returns the firmware version this port's device reported
+// ("" before any banner).
+func (t *serialTransport) bannerVersion() string {
+	v, _ := t.version.Load().(string)
+	return v
+}
+
+// bannerBoard returns the board type this port's device reported
+// ("" before any banner).
+func (t *serialTransport) bannerBoard() string {
+	b, _ := t.board.Load().(string)
+	return b
+}
+
+// clearBanner forgets the cached banner (pre-flash).
+func (t *serialTransport) clearBanner() {
+	t.version.Store("")
+	t.board.Store("")
 }
 
 // drop closes port if it is still the active one.
-func (l *Light) drop(port serial.Port) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.port == port {
-		l.port.Close()
-		l.port = nil
-		l.connected.Store(false)
+func (t *serialTransport) drop(port serial.Port) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.port == port {
+		t.port.Close()
+		t.port = nil
+		t.conn.Store(false)
 	}
 }
 
-// Send writes a state to the device, connecting first if needed.
-// Only the agent's push goroutine calls this; the UI never blocks on it.
-func (l *Light) Send(state string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if !l.ensureLocked() {
-		return
-	}
-	if _, err := l.port.Write([]byte("STATE:" + state + "\n")); err != nil {
-		l.port.Close()
-		l.port = nil
-		l.connected.Store(false)
-	}
-}
-
-// SendLine writes an arbitrary protocol line (e.g. an EMOJI payload).
-// Blocks until transmitted; large payloads take a couple of seconds.
-func (l *Light) SendLine(line string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if !l.ensureLocked() {
+// sendLine writes a protocol line, connecting first if needed.
+func (t *serialTransport) sendLine(line string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.ensureLocked() {
 		return false
 	}
-	if _, err := l.port.Write([]byte(line + "\n")); err != nil {
-		l.port.Close()
-		l.port = nil
-		l.connected.Store(false)
+	if _, err := t.port.Write([]byte(line + "\n")); err != nil {
+		t.port.Close()
+		t.port = nil
+		t.conn.Store(false)
 		return false
 	}
 	return true
 }
 
-// Connected reports whether a serial port is currently open (lock-free,
-// safe to call from UI threads while a reconnect is in progress).
-func (l *Light) Connected() bool {
-	return l.connected.Load()
+// sendEmoji sends raw RGB565 pixels as the base64 EMOJI: line the serial
+// protocol expects.
+func (t *serialTransport) sendEmoji(rgb565 []byte) bool {
+	return t.sendLine("EMOJI:" + base64.StdEncoding.EncodeToString(rgb565))
 }
 
-// Version returns the firmware version the device last reported ("" if the
-// firmware predates the VERSION banner).
-func (l *Light) Version() string {
-	v, _ := l.version.Load().(string)
-	return v
+// connected reports whether a serial port is currently open (lock-free).
+func (t *serialTransport) connected() bool {
+	return t.conn.Load()
 }
 
-// ClearVersion forgets the cached firmware version (called before a flash
-// so a lost banner can never leave a stale pre-flash version on display).
-func (l *Light) ClearVersion() {
-	l.version.Store("")
+// lastPortName returns the last successfully opened port path, even after
+// close.
+func (t *serialTransport) lastPortName() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.portName
 }
 
-// PortName returns the last successfully opened port path, even after Close.
-func (l *Light) PortName() string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.portName
-}
-
-// Close releases the serial port (e.g. so esptool can use it).
-func (l *Light) Close() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.port != nil {
-		l.port.Close()
-		l.port = nil
-		l.connected.Store(false)
+// close releases the serial port (e.g. so esptool can use it).
+func (t *serialTransport) close() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.port != nil {
+		t.port.Close()
+		t.port = nil
+		t.conn.Store(false)
 	}
 }

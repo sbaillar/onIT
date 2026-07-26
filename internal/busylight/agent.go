@@ -1,6 +1,7 @@
 package busylight
 
 import (
+	"context"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -20,6 +21,10 @@ type Status struct {
 	Override       string // "" = auto (follow Teams)
 	Shown          string // state currently sent to the device
 	DeviceFW       string // firmware version the device reported; "" = unknown
+	Board          string // board type the device reported ("lcd128", "amoled175", "" = unknown)
+	Transport      string // live link: "ble", "usb", "" while disconnected
+	BLEBonded      bool   // a BLE busylight is paired
+	PairingLost    bool   // bonded device refused the encrypted link; re-pair
 }
 
 // Agent drives the light from Teams presence, with an optional manual override.
@@ -116,6 +121,10 @@ func (a *Agent) statusLocked() Status {
 		Override:       a.override,
 		Shown:          a.effectiveLocked(),
 		DeviceFW:       a.light.Version(),
+		Board:          a.light.Board(),
+		Transport:      a.light.Transport(),
+		BLEBonded:      a.light.BLEBonded(),
+		PairingLost:    a.light.PairingLost(),
 	}
 }
 
@@ -138,6 +147,20 @@ func (a *Agent) ShowEmoji(payloadB64 string) bool {
 	ok := a.light.SendLine("EMOJI:" + payloadB64)
 	a.wake()
 	return ok
+}
+
+// PairBLE scans for BLE busylights and pairs with the one choose accepts
+// (see Light.PairBLE). Blocks until pairing finishes or ctx is cancelled.
+func (a *Agent) PairBLE(ctx context.Context, choose func(BLEDevice) bool) error {
+	err := a.light.PairBLE(ctx, choose)
+	a.wake()
+	return err
+}
+
+// ForgetBLE drops the bonded BLE device; the light falls back to USB.
+func (a *Agent) ForgetBLE() {
+	a.light.ForgetBLE()
+	a.wake()
 }
 
 func (a *Agent) setTeams(up bool, state string) {

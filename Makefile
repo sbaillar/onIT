@@ -11,6 +11,7 @@ ESPTOOL := build/tools/esptool
 ESPTOOL_WIN := build/tools/esptool.exe
 FQBN    := esp32:esp32:esp32s3
 SKETCH  := firmware/busylight_round
+SKETCH_AMOLED := firmware/busylight_round_amoled
 MINGW   := x86_64-w64-mingw32-gcc
 
 .PHONY: build test app pkg windows windows-gui firmware clean
@@ -24,13 +25,18 @@ test:
 	go vet ./...
 	go test ./...
 
-# compile the sketch and refresh the image embedded in the app
+# compile both sketches and refresh the images embedded in the app
 firmware:
 	arduino-cli compile --fqbn $(FQBN) --export-binaries $(SKETCH)
 	cp $(SKETCH)/build/esp32.esp32.esp32s3/busylight_round.ino.merged.bin \
 		internal/firmware/firmware.bin
 	sed -n 's/^#define FW_VERSION "\(.*\)".*/\1/p' \
 		$(SKETCH)/busylight_round.ino > internal/firmware/version.txt
+	arduino-cli compile --fqbn $(FQBN) --export-binaries $(SKETCH_AMOLED)
+	cp $(SKETCH_AMOLED)/build/esp32.esp32.esp32s3/busylight_round_amoled.ino.merged.bin \
+		internal/firmware/firmware_amoled.bin
+	sed -n 's/^#define FW_VERSION "\(.*\)".*/\1/p' \
+		$(SKETCH_AMOLED)/busylight_round_amoled.ino > internal/firmware/version_amoled.txt
 
 # pinned standalone esptool, bundled into the .app for in-app flashing
 $(ESPTOOL):
