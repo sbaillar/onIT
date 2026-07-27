@@ -51,6 +51,12 @@ live (`⋆ BLE` / `⚡ USB`).
 Done — the light now follows your presence, even when you're in a meeting
 from another device.
 
+**Updates** come from GitHub Releases: tray → **Check for updates…**.
+Settings → **Get beta updates (pre-release)** switches to the beta train,
+which also offers prerelease builds — new features before they reach
+stable, with less testing behind them. Unticking it stops offering betas;
+you keep the build you're on until stable passes it.
+
 The onIT dot lives in the menu bar: it mirrors the light's state, the menu
 sets states directly, and "Open onIT" shows the control window (Auto/manual
 state buttons, connection status, firmware updates, start-at-login).

@@ -325,6 +325,14 @@ func main() {
 	micCheck.SetChecked(micOn)
 	agent.SetMicRule(micOn)
 
+	// beta channel: "Check for updates" also considers prerelease builds.
+	// Leaving it stays put until stable catches up (newerVersion never
+	// offers an older stable to someone already on a beta).
+	betaCheck := widget.NewCheck("Get beta updates (pre-release)", func(on bool) {
+		prefs.SetBool(betaKey, on)
+	})
+	betaCheck.SetChecked(prefs.Bool(betaKey))
+
 	loginCheck := widget.NewCheck("Start at login", nil)
 	loginCheck.SetChecked(autostartEnabled())
 	loginCheck.OnChanged = func(on bool) {
@@ -427,7 +435,7 @@ func main() {
 
 	menuTail := []*fyne.MenuItem{
 		fyne.NewMenuItemSeparator(),
-		fyne.NewMenuItem("Check for updates...", func() { w.Show(); checkForUpdates(w) }),
+		fyne.NewMenuItem("Check for updates...", func() { w.Show(); checkForUpdates(w, prefs.Bool(betaKey)) }),
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Uninstall onIT...", doUninstall),
 	}
@@ -664,7 +672,7 @@ func main() {
 	// Not an Accordion: Fyne grows the fixed-size window when content
 	// expands but never shrinks it back, and Accordion offers no toggle
 	// hook - so a look-alike button that resizes the window on collapse.
-	settingsBody := container.NewVBox(fwLbl, fwBtn, graphSetupBtn, remoteCheck, micCheck, loginCheck)
+	settingsBody := container.NewVBox(fwLbl, fwBtn, graphSetupBtn, remoteCheck, micCheck, betaCheck, loginCheck)
 	settingsBody.Hide()
 	var settingsBtn *widget.Button
 	settingsBtn = widget.NewButtonWithIcon("Settings", theme.MenuDropDownIcon(), func() {
@@ -682,7 +690,7 @@ func main() {
 	settings := container.NewVBox(settingsBtn, settingsBody)
 	// help menu in the top-left corner (an LSUIElement app has no menu bar)
 	helpMenu := fyne.NewMenu("",
-		fyne.NewMenuItem("Check for updates...", func() { checkForUpdates(w) }),
+		fyne.NewMenuItem("Check for updates...", func() { checkForUpdates(w, prefs.Bool(betaKey)) }),
 		fyne.NewMenuItem("About onIT...", func() { showAbout(a) }),
 	)
 	var helpBtn *widget.Button
