@@ -1029,8 +1029,6 @@ void setup() {
   prefs.begin("onit", false);
   tzStr = prefs.getString("tz", "");
   if (tzStr.length()) { setenv("TZ", tzStr.c_str(), 1); tzset(); }
-  prefs.remove("ssid");           // Wi-Fi provisioning is gone: drop any
-  prefs.remove("pass");           // credentials an older firmware stored
   LittleFS.begin(true);           // mounts the default "spiffs" data partition
   LittleFS.mkdir("/deck");
   deckScan();

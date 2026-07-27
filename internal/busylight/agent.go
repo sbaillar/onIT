@@ -10,6 +10,11 @@ import (
 
 const heartbeat = 2 * time.Second // firmware watchdog is 5s
 
+const (
+	clockPushEvery = 30 * time.Minute // re-send the time against drift
+	clockPushRetry = 30 * time.Second // nothing listening yet: try again soon
+)
+
 // States accepted by the firmware, in display order ("off" last).
 var States = []string{"available", "meeting", "sharing", "off"}
 
@@ -164,8 +169,6 @@ func (a *Agent) SetOnRoulette(f func(slot int)) { a.light.SetOnRoulette(f) }
 // Spin starts the emoji roulette on the device (see Light.Spin).
 func (a *Agent) Spin() error { return a.light.Spin() }
 
-// PushClock sets the device's standalone clock (see Light.PushClock).
-func (a *Agent) PushClock() error { return a.light.PushClock() }
 
 // PairBLE scans for BLE busylights and pairs with the one choose accepts
 // (see Light.PairBLE). Blocks until pairing finishes or ctx is cancelled.
@@ -270,16 +273,19 @@ func (a *Agent) Run() {
 		}
 	}()
 	go func() { // keep the standalone clock set
-		// The device has no RTC battery and no network: the host is its only
-		// time source, so re-push periodically rather than only on connect —
-		// that also covers a USB board (no BLE connect hook) and any device
-		// that rebooted while we were attached. A failure here just means
-		// nothing is connected, which the next tick retries.
+		// Both transports push on connect (handleBLEConnect / the serial
+		// VERSION banner), so this is the backstop: it re-sends periodically
+		// against drift, and retries quickly while nothing is listening —
+		// a push lost to the reset that opening the port causes must not
+		// leave the clock unset until the next long tick.
 		for {
-			if !a.flashing.Load() { // esptool owns the port mid-flash
-				a.light.PushClock()
+			wait := clockPushEvery
+			if a.flashing.Load() { // esptool owns the port mid-flash
+				wait = clockPushRetry
+			} else if err := a.light.PushClock(); err != nil {
+				wait = clockPushRetry
 			}
-			time.Sleep(30 * time.Minute)
+			time.Sleep(wait)
 		}
 	}()
 	go func() { // watch the microphone for the mic rule

@@ -1,6 +1,8 @@
 package busylight
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -154,5 +156,41 @@ func TestLightHandleTouch(t *testing.T) {
 	case kind := <-got:
 		t.Errorf("unexpected touch callback %q", kind)
 	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestPushClock(t *testing.T) {
+	f := &fakeTransport{ok: true}
+	l := NewLight()
+	l.usb = f
+	l.ble = nil // ignore any bonded device on the host running the tests
+
+	if err := l.PushClock(); err != nil {
+		t.Fatalf("PushClock = %v, want nil", err)
+	}
+	if len(f.lines) != 2 {
+		t.Fatalf("PushClock lines = %q, want 2", f.lines)
+	}
+	// TZ first: the device must render the first TIME: in local time
+	if !strings.HasPrefix(f.lines[0], "TZ:") {
+		t.Errorf("first line = %q, want a TZ: line", f.lines[0])
+	}
+	secs, ok := strings.CutPrefix(f.lines[1], "TIME:")
+	if !ok {
+		t.Fatalf("second line = %q, want a TIME: line", f.lines[1])
+	}
+	epoch, err := strconv.ParseInt(secs, 10, 64)
+	if err != nil {
+		t.Fatalf("TIME payload %q: %v", secs, err)
+	}
+	if d := time.Since(time.Unix(epoch, 0)); d < 0 || d > time.Minute {
+		t.Errorf("TIME epoch is %v off from now", d)
+	}
+
+	// nothing connected: report it rather than silently doing nothing
+	f2 := &fakeTransport{ok: false}
+	l.usb = f2
+	if err := l.PushClock(); err == nil {
+		t.Error("PushClock with a dead link = nil, want an error")
 	}
 }

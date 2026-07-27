@@ -134,6 +134,18 @@ func (l *Light) handleTouch(line string) {
 		if f, _ := l.onTouch.Load().(func(string)); f != nil {
 			go f(kind)
 		}
+		return
+	}
+	// A serial VERSION banner means the board just booted or the port just
+	// opened (opening resets it), so its clock is unset — this is the USB
+	// counterpart of handleBLEConnect. Off this goroutine: it is the reader,
+	// and PushClock writes.
+	if strings.HasPrefix(line, "VERSION:") {
+		go func() {
+			if err := l.PushClock(); err != nil {
+				log.Printf("clock push failed: %v", err)
+			}
+		}()
 	}
 }
 
