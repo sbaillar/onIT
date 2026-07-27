@@ -256,9 +256,18 @@ func main() {
 			rows.Add(container.NewBorder(nil, nil, nil, del, pick))
 		}
 		pop = widget.NewPopUp(rows, w.Canvas())
+		// Fyne clips a pop-up to the window canvas, so opening below the
+		// entry — which sits near the bottom — left room for a single row.
+		// Keep it below when it fits, otherwise slide it up until it does.
 		pos := a.Driver().AbsolutePositionForObject(customEntry)
-		pop.ShowAtPosition(pos.Add(fyne.NewPos(0, customEntry.Size().Height)))
-		pop.Resize(fyne.NewSize(customEntry.Size().Width, pop.MinSize().Height))
+		h := pop.MinSize().Height
+		canvasH := w.Canvas().Size().Height
+		y := pos.Y + customEntry.Size().Height
+		if y+h > canvasH {
+			y = max(0, canvasH-h)
+		}
+		pop.ShowAtPosition(fyne.NewPos(pos.X, y))
+		pop.Resize(fyne.NewSize(customEntry.Size().Width, h))
 	}
 
 	// the pin keeps the typed message in the drop-down permanently
@@ -432,8 +441,10 @@ func main() {
 	syncItem := fyne.NewMenuItem("syncing emojis...", nil)
 	syncItem.Disabled = true // indicator line, not clickable (renders dimmed)
 
+	var showSettings func() // assigned once the settings window exists
 	menuTail := []*fyne.MenuItem{
 		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("Settings...", func() { showSettings() }),
 		fyne.NewMenuItem("Check for updates...", func() { w.Show(); checkForUpdates(w, prefs.Bool(betaKey)) }),
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Uninstall onIT...", doUninstall),
@@ -458,7 +469,12 @@ func main() {
 		if st.PairingLost {
 			dev = append(dev, lostItem)
 		}
-		dev = append(dev, pairItem)
+		// Pairing is only an offer when there's nothing to pair with: while
+		// BLE is live the transport line above already says so, dimmed, the
+		// way the USB line does.
+		if st.Transport != "ble" {
+			dev = append(dev, pairItem)
+		}
 		if st.BLEBonded {
 			dev = append(dev, forgetItem)
 		}
@@ -668,25 +684,21 @@ func main() {
 	})
 	remoteCheck.SetChecked(remoteSrv != nil)
 
-	// Not an Accordion: Fyne grows the fixed-size window when content
-	// expands but never shrinks it back, and Accordion offers no toggle
-	// hook - so a look-alike button that resizes the window on collapse.
-	settingsBody := container.NewVBox(fwLbl, fwBtn, graphSetupBtn, remoteCheck, micCheck, betaCheck, loginCheck)
-	settingsBody.Hide()
-	var settingsBtn *widget.Button
-	settingsBtn = widget.NewButtonWithIcon("Settings", theme.MenuDropDownIcon(), func() {
-		if settingsBody.Visible() {
-			settingsBody.Hide()
-			settingsBtn.SetIcon(theme.MenuDropDownIcon())
-			w.Resize(fyne.NewSize(260, 0)) // snap back to content height
-		} else {
-			settingsBody.Show()
-			settingsBtn.SetIcon(theme.MenuDropUpIcon())
-		}
-	})
+	// Settings live in their own window: inline they made the main window
+	// grow and shrink, and any pop-up opened near the bottom of the short
+	// window had nowhere to unfold into (Fyne clips pop-ups to the canvas).
+	// Built once and hidden on close so update() keeps its widget pointers.
+	settingsWin := a.NewWindow("onIT Settings")
+	settingsWin.SetContent(container.NewVBox(
+		fwLbl, fwBtn, graphSetupBtn, remoteCheck, micCheck, betaCheck, loginCheck))
+	settingsWin.SetCloseIntercept(settingsWin.Hide)
+	settingsWin.Resize(fyne.NewSize(300, 0))
+	showSettings = func() { settingsWin.Show(); settingsWin.RequestFocus() }
+
+	settingsBtn := widget.NewButtonWithIcon("Settings", theme.SettingsIcon(), showSettings)
 	settingsBtn.Alignment = widget.ButtonAlignLeading
 	settingsBtn.Importance = widget.LowImportance
-	settings := container.NewVBox(settingsBtn, settingsBody)
+	settings := container.NewVBox(settingsBtn)
 	// help menu in the top-left corner (an LSUIElement app has no menu bar)
 	helpMenu := fyne.NewMenu("",
 		fyne.NewMenuItem("Check for updates...", func() { checkForUpdates(w, prefs.Bool(betaKey)) }),
