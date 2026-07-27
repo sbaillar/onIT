@@ -67,6 +67,11 @@ app: $(ESPTOOL)
 	mv cmd/onit/$(APP).app $(DIST)/
 	/usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" \
 		$(DIST)/$(APP).app/Contents/Info.plist
+	# CoreBluetooth is linked in (BLE support); without this key macOS
+	# aborts the app at launch when opened from Finder/LaunchServices
+	/usr/libexec/PlistBuddy -c \
+		"Add :NSBluetoothAlwaysUsageDescription string 'onIT connects to your busylight over Bluetooth.'" \
+		$(DIST)/$(APP).app/Contents/Info.plist
 	cp $(ESPTOOL) $(DIST)/$(APP).app/Contents/Resources/esptool
 
 # macOS installer: onIT.app + headless CLI in /usr/local/bin
