@@ -62,6 +62,15 @@ func main() {
 		}
 	}
 	a.Settings().SetTheme(onitTheme{base: a.Settings().Theme()})
+	// all goroutine UI updates go through fyne.Do; declare that so Fyne
+	// skips its "not migrated to fyne.Do" startup warning (checked lazily
+	// at a.Run, so setting it here covers packaged and go-build binaries)
+	meta := a.Metadata()
+	if meta.Migrations == nil {
+		meta.Migrations = map[string]bool{}
+	}
+	meta.Migrations["fyneDo"] = true
+	app.SetMetadata(meta)
 
 	if old, err := takeoverInstance(pidFilePath(), isOnitProcess); err != nil {
 		log.Printf("single-instance check failed: %v", err)
