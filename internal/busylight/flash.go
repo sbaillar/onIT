@@ -111,9 +111,14 @@ func (a *Agent) FlashFirmware(esptool string, force bool) error {
 	a.light.Close()        // release the port for esptool
 	a.light.ClearVersion() // the answer must come from the new firmware
 	log.Printf("Flashing %s %s (%d bytes) to %s", board, fwVer, len(image), port)
-	out, err := exec.Command(esptool,
+	cmd := exec.Command(esptool,
 		"--chip", "esp32s3", "--port", port, "--baud", "460800",
-		"write-flash", "0x0", tmp.Name()).CombinedOutput()
+		"write-flash", "0x0", tmp.Name())
+	// esptool (PyInstaller-frozen) calls os.getcwd() at startup and crashes
+	// with FileNotFoundError if it inherits a working directory that has
+	// since been deleted — pin it to one that always exists.
+	cmd.Dir = os.TempDir()
+	out, err := cmd.CombinedOutput()
 	log.Printf("esptool output:\n%s", out)
 	if err != nil {
 		tail := string(out)
