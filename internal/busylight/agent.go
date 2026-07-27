@@ -280,10 +280,15 @@ func (a *Agent) Run() {
 		// leave the clock unset until the next long tick.
 		for {
 			wait := clockPushEvery
-			if a.flashing.Load() { // esptool owns the port mid-flash
-				wait = clockPushRetry
-			} else if err := a.light.PushClock(); err != nil {
-				wait = clockPushRetry
+			// Mid-flash esptool owns the port, so don't push — and don't
+			// poll either: every wake is another chance to lose the race
+			// between this check and the write reopening the port. The
+			// reboot at the end of a flash sends a VERSION banner, which
+			// pushes the clock, so nothing here needs to hurry.
+			if !a.flashing.Load() {
+				if err := a.light.PushClock(); err != nil {
+					wait = clockPushRetry
+				}
 			}
 			time.Sleep(wait)
 		}
