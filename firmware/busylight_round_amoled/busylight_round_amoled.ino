@@ -71,7 +71,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75 for your revision.
  */
 
-#define FW_VERSION "1.1.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.2.0"   // extracted by `make firmware`, embedded in onIT
 
 #include <Arduino_GFX_Library.h>
 #include <Adafruit_GFX.h>   // only for its Fonts/ include path
@@ -519,7 +519,7 @@ void clockTick() {
 
 // brief message over the clock face; face repainted when it expires
 void drawToast(const char *msg) {
-  gfx->fillCircle(CENTER, CENTER, 170, C_BG_IDLE);       // wipes hands too
+  gfx->fillCircle(CENTER, CENTER, 178, C_BG_IDLE);       // wipes hands too (sec hand reaches r=176)
   textCentered(msg, 233, &FreeSansBold9pt7b, C_YELLOW);
   brightness(35);
   prevHandsValid = false;
@@ -851,8 +851,11 @@ class ServerCB : public NimBLEServerCallbacks {
   // DisplayOnly: we render the passkey, the host types it
   uint32_t onPassKeyDisplay() override {
     if (millis() > pairableUntil && !pairingMode) { // outside boot window & not pairing: reject
+      // NimBLE injects this return value as the passkey (NimBLEServer.cpp),
+      // and the terminate above is async and aimed at the newest connection,
+      // which need not be this peer — so never return a guessable 0 here.
       NimBLEDevice::getServer()->disconnect(lastConnHandle);
-      return 0;
+      return esp_random() % 1000000;   // never rendered: unguessable
     }
     uint32_t key = esp_random() % 1000000;
     pendingPasskey = key;           // loop draws the pairing screen
