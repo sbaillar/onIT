@@ -429,7 +429,6 @@ func main() {
 			}
 		}()
 	})
-	wifiItem := fyne.NewMenuItem("Set up clock Wi-Fi...", func() { w.Show(); showWiFiSetup(a, agent, w) })
 	syncItem := fyne.NewMenuItem("syncing emojis...", nil)
 	syncItem.Disabled = true // indicator line, not clickable (renders dimmed)
 
@@ -454,7 +453,7 @@ func main() {
 			dev = append(dev, syncItem)
 		}
 		if st.Transport == "ble" {
-			dev = append(dev, spinItem, wifiItem)
+			dev = append(dev, spinItem)
 		}
 		if st.PairingLost {
 			dev = append(dev, lostItem)

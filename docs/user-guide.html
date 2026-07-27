@@ -50,11 +50,12 @@ on the newer device, Bluetooth.</p>
 flashing the right firmware for whichever one you plug in:</p>
 <table>
   <tr><th>Device</th><th>Screen</th><th>Connection</th></tr>
-  <tr><td><b>ESP32-S3 Touch LCD 1.28&Prime;</b></td><td>1.28&Prime; round LCD, 240&times;240, touch</td><td>USB only</td></tr>
+  <tr><td><b>ESP32-S3 Touch LCD 1.28&Prime;</b></td><td>1.28&Prime; round LCD, 240&times;240, touch</td><td><b>Bluetooth</b> (preferred) or USB</td></tr>
   <tr><td><b>ESP32-S3 Touch AMOLED 1.75&Prime;</b></td><td>1.75&Prime; round AMOLED, 466&times;466, touch, comes with a case</td><td><b>Bluetooth</b> (preferred) or USB</td></tr>
 </table>
-<p>The AMOLED model can sit anywhere within Bluetooth range on any USB-C power
-source &mdash; a wall charger, a battery bank &mdash; no computer connection needed.</p>
+<p>Both models have the same features. Either can sit anywhere within Bluetooth
+range on any USB-C power source &mdash; a wall charger, a battery bank &mdash; with no
+computer connection needed.</p>
 
 <h1>3. Installing</h1>
 <h2>macOS</h2>
@@ -71,11 +72,12 @@ SmartScreen warns once (<i>More info &rarr; Run anyway</i>). The device appears
 as a COM port automatically. Bluetooth support on Windows is planned but not in
 this release &mdash; use USB there for now.</p>
 
-<h1>4. Going wireless (1.75&Prime; AMOLED)</h1>
+<h1>4. Going wireless</h1>
 <h2>Pairing</h2>
 <ol>
   <li>Power the device (any USB-C source) and make sure Bluetooth is on for your Mac.</li>
-  <li>In the onIT menu, choose <b>Pair busylight&hellip;</b> and pick your device (<span class="mono">onIT-AMOLED-&times;&times;&times;&times;</span>).</li>
+  <li>In the onIT menu, choose <b>Pair busylight&hellip;</b> and pick your device (<span class="mono">onIT-AMOLED-&times;&times;&times;&times;</span> or
+  <span class="mono">onIT-LCD-&times;&times;&times;&times;</span>).</li>
   <li>The device shows a <b>6-digit passkey</b> full-screen; type it into the macOS pairing dialog.</li>
 </ol>
 <p>That&rsquo;s it &mdash; the link is encrypted and bonded to your Mac. onIT reconnects
@@ -97,24 +99,23 @@ face for 10 seconds, and pair again.</div>
   <tr><td>Available</td><td>Free, busy without a call, away, be-right-back</td><td>Full-screen green</td></tr>
   <tr><td>Meeting</td><td>In a call or meeting (or your mic is in use)</td><td>Solid red with mic icon</td></tr>
   <tr><td>Presenting</td><td>Sharing your screen, or Do Not Disturb</td><td>Purple, pulsing ring</td></tr>
-  <tr><td>Off / stale</td><td>No presence source for a few seconds</td><td>Dark dotted ring (USB) or the clock (wireless AMOLED)</td></tr>
+  <tr><td>Off / stale</td><td>No presence source for a few seconds</td><td>The standalone clock</td></tr>
 </table>
 <p>Manual states, custom text in your chosen colors, and full-screen emoji are set
 from the menu &mdash; manual choices override Teams until you click <b>Auto (Teams)</b>.
 The five custom messages and emojis you use most sit at the top level of the menu.</p>
 
-<h1>6. The standalone clock (AMOLED)</h1>
-<p>When no computer is connected, the wireless device doesn&rsquo;t go dark &mdash; it
-shows a round <b>analog clock</b> in the onIT style. To keep accurate time on its own,
-give it your Wi-Fi once: menu &rarr; <b>Set up clock Wi-Fi&hellip;</b> (only shown while
-connected over Bluetooth). Credentials travel over the encrypted link, are stored only
-on the device, and are used solely for network time (NTP) &mdash; the clock stays right
-through power cuts and daylight-saving changes, using your Mac&rsquo;s time zone.</p>
-<p>Without Wi-Fi the clock still works while onIT is connected and for stretches
-away from the Mac, but it shows a dimmed, handless face after a power loss until it
-can sync again.</p>
+<h1>6. The standalone clock</h1>
+<p>When no computer is connected, the device doesn&rsquo;t go dark &mdash; it shows a
+round <b>analog clock</b> in the onIT style. There is nothing to set up: whenever onIT
+is connected it sends the device your time zone and the current time, and the device
+keeps time from there on its own, drifting only a second or two a day. Because it
+gets your time zone rather than a fixed offset, it handles daylight-saving changes by
+itself.</p>
+<p>Neither board has a battery-backed clock, so a power cut clears the time: the face
+stays dimmed and hand-less until onIT connects again, which sets it within seconds.</p>
 
-<h1>7. Emoji roulette (AMOLED)</h1>
+<h1>7. Emoji roulette</h1>
 <p>A little desk toy: spin a wheel of your favorite emojis and let fate pick one.</p>
 <ul>
   <li><b>Standalone:</b> tap the clock (or the current winner) &mdash; the screen cycles
@@ -141,7 +142,7 @@ sign in on the managed machine and relay presence to the one with the light:</p>
   <li><b>Firmware updates</b> are bundled with the app and offered automatically per board over USB; <b>Reflash firmware</b> in the menu recovers a confused device.</li>
   <li><b>Device not found (USB)?</b> Use a data-capable cable, and run <span class="mono">onitctl -ports</span> to list serial ports.</li>
   <li><b>Bluetooth not connecting?</b> Check the tray indicator; power-cycle the device (it re-advertises), and see the re-pairing tip in section 4.</li>
-  <li><b>Clock blank after power loss?</b> It needs one Wi-Fi sync (section 6) or a Bluetooth connection to learn the time again.</li>
+  <li><b>Clock blank after power loss?</b> Connect it to onIT (Bluetooth or USB) once and it learns the time again within seconds.</li>
   <li><b>App updates:</b> <b>Check for updates&hellip;</b> in the menu compares against the latest GitHub release and walks you through the install.</li>
 </ul>
 

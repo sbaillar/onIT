@@ -9,10 +9,11 @@ APPLDFLAGS := -trimpath -ldflags "-s -w -X main.appVersion=$(VERSION)"
 ESPTOOL_VERSION := v5.3.1
 ESPTOOL := build/tools/esptool
 ESPTOOL_WIN := build/tools/esptool.exe
-# LCD board: 16MB flash + sketch-local partitions.csv (same layout as the
-# AMOLED board — Wi-Fi/LittleFS outgrow the stock 4MB scheme's app slot);
-# PSRAM=enabled maps the 2MB embedded QSPI PSRAM for the emoji deck cache
-FQBN    := esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=custom,PSRAM=enabled
+# LCD board: stock 4MB scheme is enough (no Wi-Fi stack; the sketch uses 57%
+# of the 1.25MB app slot and the deck needs 576KB of the 1.44MB spiffs
+# partition), so it runs on 4MB and 16MB revisions alike. PSRAM=enabled maps
+# the embedded QSPI PSRAM for the emoji deck cache.
+FQBN    := esp32:esp32:esp32s3:PSRAM=enabled
 # AMOLED board: 16MB flash + sketch-local partitions.csv (Wi-Fi/LittleFS need
 # more than the stock 4MB scheme's 1.25MB app slot); Octal PSRAM caches the
 # emoji deck so roulette frames never hit flash

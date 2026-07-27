@@ -11,15 +11,16 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
-// onIT BLE GATT layout — keep in sync with firmware/busylight_round_amoled
-// ("6f6e4954" = "onIT", "0175" = 1.75"). Three characteristics.
+// onIT BLE GATT layout — keep in sync with both firmware sketches (the UUIDs
+// are shared; "6f6e4954" = "onIT"). Three characteristics.
 //
 //	Service  6f6e4954-0175-4b1e-8001-000000000001
 //	  Command  6f6e4954-0175-4b1e-8001-000000000002  write   protocol lines: STATE:*, VERSION,
-//	                                                         SPIN, WIFI:<ssid>\t<password>,
+//	                                                         SPIN, TIME:<unix>,
 //	                                                         TZ:<posix-tz>, DECK:<count>
 //	  Emoji    6f6e4954-0175-4b1e-8001-000000000003  write   10-byte v2 header (offset u32 LE,
 //	                                                         total u16 LE, seq u16 LE, slot u8,
@@ -208,8 +209,7 @@ func (l *Light) PairingLost() bool {
 }
 
 // bleSend writes a protocol line to the bonded device over BLE only (never
-// USB): the WIFI:/TZ: provisioning that only the standalone-clock board
-// understands. Errors when no BLE device is bonded or the write fails.
+// USB). Errors when no BLE device is bonded or the write fails.
 func (l *Light) bleSend(line string) error {
 	ble := l.bleTr()
 	if ble == nil {
@@ -221,19 +221,22 @@ func (l *Light) bleSend(line string) error {
 	return nil
 }
 
-// ProvisionWiFi sends Wi-Fi credentials to the bonded BLE device so its
-// standalone clock can reach NTP. The device stores them in NVS; they are
-// never readable back over BLE.
-func (l *Light) ProvisionWiFi(ssid, pass string) error {
-	return l.bleSend("WIFI:" + ssid + "\t" + pass)
-}
-
-// PushTimezone sends the Mac's timezone to the bonded BLE device as a POSIX
-// TZ string (e.g. EST5EDT,M3.2.0,M11.1.0) so the standalone clock tracks
-// local time and DST.
-func (l *Light) PushTimezone() error {
+// PushClock sets the device's standalone clock: the Mac's timezone as a POSIX
+// TZ string (e.g. EST5EDT,M3.2.0,M11.1.0) so it tracks DST on its own, then
+// the current UTC epoch. This is the only way the device learns the time —
+// it has no RTC battery and no network of its own — so it goes over whichever
+// transport is live, not BLE alone: a USB-only board still needs a clock for
+// when the app quits. Order matters; TZ first means the first TIME: push
+// already renders in local time.
+func (l *Light) PushClock() error {
 	now := time.Now()
-	return l.bleSend("TZ:" + posixTZ(now.Location(), now.Year()))
+	if !l.sendLine("TZ:" + posixTZ(now.Location(), now.Year())) {
+		return errors.New("busylight not connected")
+	}
+	if !l.sendLine("TIME:" + strconv.FormatInt(time.Now().Unix(), 10)) {
+		return errors.New("busylight not connected")
+	}
+	return nil
 }
 
 // Spin starts the emoji roulette on the device; the winner arrives as a
@@ -355,12 +358,12 @@ func (l *Light) DeckSyncing() bool {
 }
 
 // handleBLEConnect runs the post-connect pushes on the BLE link's goroutine:
-// the timezone on every connect, then a deck sync. The deck source reports a
+// the clock on every connect, then a deck sync. The deck source reports a
 // cheap signature (no rendering) alongside the render closure; if it matches
 // the last fully-synced deck, rendering and SyncDeck are skipped entirely.
 func (l *Light) handleBLEConnect() {
-	if err := l.PushTimezone(); err != nil {
-		log.Printf("BLE timezone push failed: %v", err)
+	if err := l.PushClock(); err != nil {
+		log.Printf("BLE clock push failed: %v", err)
 	}
 	src, _ := l.deckSource.Load().(func() (string, func() [][]byte))
 	if src == nil || l.deckSyncing.Load() {

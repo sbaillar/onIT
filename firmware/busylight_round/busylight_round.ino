@@ -23,9 +23,9 @@
  *             requiring an encrypted bonded link (LE Secure Connections,
  *             DisplayOnly — 6-digit passkey shown full-screen while pairing):
  *               Command (write)  same text lines as serial (STATE:*, SPIN,
- *                                VERSION) plus config lines WIFI:<ssid>\t
- *                                <password>, TZ:<posix-tz>, DECK:<count>
- *                                (stored in NVS, never readable back).
+ *                                VERSION, TIME:<epoch>) plus config lines
+ *                                TZ:<posix-tz> (stored in NVS) and
+ *                                DECK:<count>.
  *               Emoji   (write)  v2 10-byte header (offset u32, total u16,
  *                                seq u16, slot u8, flags u8, little-endian) +
  *                                raw RGB565 chunk (<=502 B); reassembled by
@@ -44,32 +44,34 @@
  *             timeout, or another 10 s hold. Pairing attempts outside these are
  *             rejected (disconnected).
  * Standalone: with no live host (the OFF/STALE condition) the panel shows an
- *             analog clock. Time comes from SNTP (pool.ntp.org) over Wi-Fi
- *             station mode — connect at boot and hourly, sync, disconnect to
- *             minimize BLE coex load. TZ applied from the stored POSIX string.
- *             Until the first sync: dimmed face, no hands. A tap spins the
- *             emoji roulette (5 s ease-out through the LittleFS deck, winner
- *             stays until the next spin or a host takes over).
+ *             analog clock. Time comes from the host: a TIME:<epoch> line
+ *             (UTC seconds) on every connect, displayed local through the
+ *             stored POSIX TZ. While powered, timekeeping rides the 40 MHz
+ *             crystal (tens of ppm — seconds per day), so one push a day
+ *             keeps it honest; a power cut clears it (no battery-backed RTC)
+ *             and the face stays dimmed and hand-less until the next push.
+ *             A tap spins the emoji roulette (5 s ease-out through the
+ *             LittleFS deck, winner stays until the next spin or a host
+ *             takes over).
  * Watchdog  : USB only: no serial for 5s -> OFF/STALE (except FLASHING: sticky,
  *             shown until the flash reset - the port is closed during esptool).
  *             While BLE is connected the link itself is the liveness signal;
  *             BLE disconnect -> OFF/STALE (except FLASHING and a roulette
  *             winner, which persists standalone).
  *
- * PARTITIONS: partitions.csv next to this sketch defines the 16MB layout
- * (6.25MB app slots + a 3.3MB "spiffs"-labeled partition that LittleFS
- * formats/mounts for the emoji deck — 20 slots need 576 KB). The Wi-Fi stack
- * pushes the app past the stock 4MB scheme's 1.25MB slot, so this sketch MUST
- * be built with FlashSize=16M,PartitionScheme=custom,PSRAM=enabled in the
- * FQBN (PartitionScheme=custom makes arduino-cli use the sketch-local
- * partitions.csv) — the Makefile firmware target does this.
+ * PARTITIONS: the stock 4MB scheme, no sketch-local partitions.csv. Without
+ * the Wi-Fi stack the app is ~57% of the 1.25MB slot, and LittleFS mounts
+ * the stock 1.44MB "spiffs" partition for the emoji deck (20 slots need
+ * 576 KB). Staying on the stock table means the image runs on 4MB and 16MB
+ * board revisions alike. Built with PSRAM=enabled (deck cache) — see the
+ * Makefile firmware target.
  *
  * NOTE ON PINS: values below match the Waveshare wiki demo for this board.
  * If the panel stays black, verify LCD_RST/TP pins against
  * waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28 for your revision.
  */
 
-#define FW_VERSION "1.11.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.12.0"   // extracted by `make firmware`, embedded in onIT
 #define BOARD_TAG  "lcd128"
 
 #include <Arduino_GFX_Library.h>
@@ -77,11 +79,10 @@
 #include <Wire.h>           // CST816S touch, polled over I2C
 #include <NimBLEDevice.h>
 #include <esp_mac.h>
-#include <WiFi.h>
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <time.h>
-#include <esp_sntp.h>
+#include <sys/time.h>
 #include <Fonts/FreeSansBold24pt7b.h>
 #include <Fonts/FreeSansBold18pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
@@ -202,16 +203,12 @@ uint8_t deckN = 0;
 static uint8_t deckSave[sizeof(emojiBuf)];  // staging so emojiBuf never tears
 uint16_t *deckCache[DECK_MAX] = {nullptr};  // PSRAM copy of each slot: spin never hits flash
 
-// ---- config (Preferences/NVS: Wi-Fi creds + POSIX TZ, never readable back)
+// ---- config (Preferences/NVS: POSIX TZ, never readable back)
 Preferences prefs;
-String wifiSsid, wifiPass, tzStr;
+String tzStr;
 
-// ---- SNTP over on-demand Wi-Fi (boot + hourly, then radio off for coex)
-enum NtpPhase { NTP_IDLE, NTP_WIFI, NTP_SYNC };
-NtpPhase ntpPhase = NTP_IDLE;
-unsigned long ntpNext = 0, ntpPhaseAt = 0;
-volatile bool ntpSynced = false;            // time valid = synced since boot
-volatile bool ntpRound = false;             // this connect cycle synced
+// set by a TIME: push from the host; false = clock face without hands
+bool timeValid = false;
 
 // ---- standalone clock / roulette / toast
 float prevHA, prevMA, prevSA;               // last-drawn hand angles (erase)
@@ -486,7 +483,7 @@ void drawClock() {
     }
   }
   prevHandsValid = false;
-  if (ntpSynced) {
+  if (timeValid) {
     drawClockHands();
     brightness(35);
   } else {
@@ -749,15 +746,20 @@ uint16_t hex565(const String &s, int off) {
 void handleLine(const String &line) {
   if (line == "VERSION") { emitEvent("VERSION:" FW_VERSION ":" BOARD_TAG); return; }
   if (line == "SPIN") { startSpin(); return; }
-  // config lines (BLE Config characteristic; also accepted over serial)
-  if (line.startsWith("WIFI:")) {
-    int tab = line.indexOf('\t');
-    if (tab > 5) {
-      wifiSsid = line.substring(5, tab);
-      wifiPass = line.substring(tab + 1);
-      prefs.putString("ssid", wifiSsid);   // NVS only, never readable over BLE
-      prefs.putString("pass", wifiPass);
-      ntpNext = 0;                         // resync with the new credentials
+  // config lines (BLE Command characteristic; also accepted over serial)
+  if (line.startsWith("TIME:")) {          // UTC epoch seconds from the host
+    long long epoch = atoll(line.substring(5).c_str());
+    if (epoch > 0) {
+      struct timeval tv = { .tv_sec = (time_t)epoch, .tv_usec = 0 };
+      settimeofday(&tv, nullptr);
+      bool first = !timeValid;
+      timeValid = true;
+      // the standalone face is the only screen showing time; repaint it so
+      // the hands appear on the first push and jump on a correction
+      if (state == ST_OFF && !overlayActive()) {
+        if (first) redrawState();
+        else drawClockHands();
+      }
     }
     return;
   }
@@ -952,57 +954,6 @@ void bleInit() {
   adv->start();
 }
 
-// ---------------------------------------------------------------- SNTP over on-demand Wi-Fi
-void ntpCb(struct timeval *tv) {   // SNTP task: sticky since-boot + per-cycle flag
-  ntpSynced = true;
-  ntpRound = true;
-}
-
-void ntpDone(bool ok) {            // drop the radio to minimize BLE coex load
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-  ntpPhase = NTP_IDLE;
-  // hourly once we have valid time; 5 min retries until the first sync
-  ntpNext = millis() + ((ok || ntpSynced) ? 3600000UL : 300000UL);
-}
-
-void ntpPoll() {
-  // Wi-Fi/BLE coex during scan/connect stalls BLE enough to break deck
-  // uploads or trip the supervision timeout, and the clock is only shown
-  // standalone anyway: never run a cycle while a central is connected, and
-  // abort one the host walked in on. ntpNext keeps sliding so a disconnect
-  // gets a quiet minute for silent reconnects before the radio comes up.
-  if (bleConns > 0) {
-    if (ntpPhase != NTP_IDLE) ntpDone(false);
-    ntpNext = millis() + 60000UL;
-    return;
-  }
-  switch (ntpPhase) {
-    case NTP_IDLE:
-      if (!wifiSsid.length() || millis() < ntpNext) return;
-      WiFi.mode(WIFI_STA);
-      WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
-      ntpPhase = NTP_WIFI;
-      ntpPhaseAt = millis();
-      break;
-    case NTP_WIFI:
-      if (WiFi.status() == WL_CONNECTED) {
-        ntpRound = false;
-        // (re)start SNTP and apply the stored POSIX TZ (setenv+tzset inside)
-        configTzTime(tzStr.length() ? tzStr.c_str() : "GMT0", "pool.ntp.org");
-        ntpPhase = NTP_SYNC;
-        ntpPhaseAt = millis();
-      } else if (millis() - ntpPhaseAt > 20000) {
-        ntpDone(false);
-      }
-      break;
-    case NTP_SYNC:
-      if (ntpRound) ntpDone(true);
-      else if (millis() - ntpPhaseAt > 20000) ntpDone(false);
-      break;
-  }
-}
-
 // ---------------------------------------------------------------- touch
 void tpWrite(uint8_t reg, uint8_t v) {
   Wire.beginTransmission(TP_ADDR);
@@ -1086,11 +1037,10 @@ void setup() {
   gfx->begin();
   touchInit();
   prefs.begin("onit", false);
-  wifiSsid = prefs.getString("ssid", "");
-  wifiPass = prefs.getString("pass", "");
   tzStr = prefs.getString("tz", "");
   if (tzStr.length()) { setenv("TZ", tzStr.c_str(), 1); tzset(); }
-  sntp_set_time_sync_notification_cb(ntpCb);
+  prefs.remove("ssid");           // Wi-Fi provisioning is gone: drop any
+  prefs.remove("pass");           // credentials an older firmware stored
   LittleFS.begin(true);           // mounts the default "spiffs" data partition
   LittleFS.mkdir("/deck");
   deckScan();
@@ -1166,18 +1116,10 @@ void loop() {
   if (pairingMode && millis() > pairingModeUntil) exitPairing();   // 2-minute timeout
 
   touchPoll();
-  ntpPoll();
   roulettePoll();
 
-  // first SNTP sync while the clock is up: hands appear
-  static bool clockLive = false;
-  if (ntpSynced && !clockLive) {
-    clockLive = true;
-    if (state == ST_OFF) redrawState();
-  }
-
   // 1 Hz clock hands while standalone (paused under a toast or the pairing screen)
-  if (state == ST_OFF && ntpSynced && !overlayActive()) clockTick();
+  if (state == ST_OFF && timeValid && !overlayActive()) clockTick();
 
   // expired toast: repaint the clock face
   if (toastUntil && millis() > toastUntil) {

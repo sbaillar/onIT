@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -18,35 +17,6 @@ import (
 // (choose blocks scanning while the user decides): the name button pairs,
 // the X skips it and resumes scanning. During pairing macOS shows its own
 // passkey dialog; the 6-digit code appears on the device screen.
-// showWiFiSetup asks for the clock's Wi-Fi network and pushes the credentials
-// (then the Mac's timezone) over the bonded BLE link, so the standalone clock
-// can reach NTP. The password goes straight to the device and is never logged.
-func showWiFiSetup(a fyne.App, agent *busylight.Agent, w fyne.Window) {
-	ssid := widget.NewEntry()
-	ssid.SetPlaceHolder("Network name")
-	pass := widget.NewPasswordEntry()
-	dialog.ShowForm("Set up clock Wi-Fi", "Send", "Cancel", []*widget.FormItem{
-		widget.NewFormItem("Network", ssid),
-		widget.NewFormItem("Password", pass),
-	}, func(ok bool) {
-		if !ok || ssid.Text == "" {
-			return
-		}
-		go func() {
-			err := agent.ProvisionWiFi(ssid.Text, pass.Text)
-			if err == nil {
-				err = agent.PushTimezone()
-			}
-			msg := "Wi-Fi sent - the clock sets itself once it reaches the network."
-			if err != nil {
-				log.Printf("clock Wi-Fi setup failed: %v", err)
-				msg = "Clock Wi-Fi setup failed: " + err.Error()
-			}
-			a.SendNotification(fyne.NewNotification("onIT", msg))
-		}()
-	}, w)
-}
-
 func showBLEPair(a fyne.App, agent *busylight.Agent, w fyne.Window) {
 	ctx, cancel := context.WithCancel(context.Background())
 	status := widget.NewLabel("Scanning for busylights...")

@@ -64,12 +64,15 @@ state buttons, connection status, firmware updates, start-at-login).
 Manual states override Teams until you click **Auto (Teams)**; the app
 returns to Auto on restart.
 
-## Standalone mode (1.75" AMOLED)
+## Standalone mode (both boards)
 
-With no computer connected, the wireless board shows a themed **analog
-clock** instead of going dark. Give it Wi-Fi once (tray → **Set up clock
-Wi-Fi…**, sent over the encrypted BLE link, stored only on the device) and
-it keeps NTP-accurate time through power loss and DST. **Emoji roulette**:
+With no computer connected, the board shows a themed **analog clock**
+instead of going dark. onIT sets it whenever they're connected — your
+timezone (so it handles DST on its own) and the current time — and the
+device keeps it from there on its own crystal, drifting only a second or
+two a day. There's nothing to configure: no Wi-Fi, no credentials. A power
+cut clears it, since neither board has a battery-backed clock, and the face
+stays dimmed and hand-less until onIT next connects. **Emoji roulette**:
 tap the clock to spin a wheel of your top emojis (synced to the device in
 the background) — fast cycling eases out over ~5 s and the winner stays
 until you spin again or the computer reconnects. "Spin the wheel" in the
@@ -159,6 +162,7 @@ make windows    # dist/onitctl.exe
 |---|---|---|
 | host → device | `STATE:available\|meeting\|sharing\|off` | show a state (host repeats every 2 s; device blanks after 5 s of silence) |
 | host → device | `VERSION` | ask for firmware version |
+| host → device | `TZ:<posix-tz>` / `TIME:<unix>` | set the standalone clock (sent on connect and every 30 min) |
 | device → host | `VERSION:x.y.z[:board]` | at boot and on query; board tag `lcd128`/`amoled175` (absent on legacy 1.28" firmware) |
 
 Over BLE the same command lines ride a GATT write characteristic, emoji

@@ -164,13 +164,8 @@ func (a *Agent) SetOnRoulette(f func(slot int)) { a.light.SetOnRoulette(f) }
 // Spin starts the emoji roulette on the device (see Light.Spin).
 func (a *Agent) Spin() error { return a.light.Spin() }
 
-// ProvisionWiFi sends Wi-Fi credentials to the bonded BLE device
-// (see Light.ProvisionWiFi).
-func (a *Agent) ProvisionWiFi(ssid, pass string) error { return a.light.ProvisionWiFi(ssid, pass) }
-
-// PushTimezone sends the Mac's timezone to the bonded BLE device
-// (see Light.PushTimezone).
-func (a *Agent) PushTimezone() error { return a.light.PushTimezone() }
+// PushClock sets the device's standalone clock (see Light.PushClock).
+func (a *Agent) PushClock() error { return a.light.PushClock() }
 
 // PairBLE scans for BLE busylights and pairs with the one choose accepts
 // (see Light.PairBLE). Blocks until pairing finishes or ctx is cancelled.
@@ -272,6 +267,19 @@ func (a *Agent) Run() {
 			a.mu.Unlock()
 			a.light.Send(state)
 			a.notify()
+		}
+	}()
+	go func() { // keep the standalone clock set
+		// The device has no RTC battery and no network: the host is its only
+		// time source, so re-push periodically rather than only on connect —
+		// that also covers a USB board (no BLE connect hook) and any device
+		// that rebooted while we were attached. A failure here just means
+		// nothing is connected, which the next tick retries.
+		for {
+			if !a.flashing.Load() { // esptool owns the port mid-flash
+				a.light.PushClock()
+			}
+			time.Sleep(30 * time.Minute)
 		}
 	}()
 	go func() { // watch the microphone for the mic rule
