@@ -14,11 +14,16 @@
  *             quadrupled to fill the screen; shown
  *             immediately and kept alive by STATE:emoji heartbeats)
  *             SPIN                       (start the emoji roulette)
+ *             DECKIMG:<slot>:<last>:<base64>  (store one roulette-deck image;
+ *             acked with DECKOK:<slot> so the host paces the upload)
+ *             DECKSIG:<sig> / DECKSIG    (set / query the signature of the
+ *             deck now on the device, so a resync can be skipped)
  *             VERSION                    (query firmware version)
  * Serial out: VERSION:x.y.z:amoled175  (at boot and on VERSION query)
  *             TOUCH:TAP / TOUCH:LONG   (screen tapped / long-pressed;
  *             the host decides what they mean)
  *             ROULETTE:<slot>          (the roulette wheel settled on <slot>)
+ *             DECKOK:<slot> / DECKSIG:<sig>  (deck upload ack / deck query reply)
  *
  * BLE       : NimBLE GATT server, one service, three characteristics, all
  *             requiring an encrypted bonded link (LE Secure Connections,
@@ -216,6 +221,9 @@ uint16_t *deckCache[DECK_MAX] = {nullptr};  // PSRAM copy of each slot: spin nev
 // ---- config (Preferences/NVS: POSIX TZ, never readable back)
 Preferences prefs;
 String tzStr;
+// signature of the deck currently on this device, set by the host after a
+// sync so a reconnect can skip re-uploading an unchanged deck
+String deckSig;
 
 // set by a TIME: push from the host; false = clock face without hands
 bool timeValid = false;
@@ -791,6 +799,34 @@ void handleLine(const String &line) {
     deckScan();
     return;
   }
+  if (line.startsWith("DECKIMG:")) {       // DECKIMG:<slot>:<last>:<base64>
+    // deck upload over serial (BLE uses the binary Emoji characteristic).
+    // Acked per image with DECKOK so the host paces the next one — a whole
+    // deck at 115200 outruns both the RX buffer and the LittleFS write.
+    int c1 = line.indexOf(':', 8);
+    int c2 = line.indexOf(':', c1 + 1);
+    if (c1 < 0 || c2 < 0) return;
+    int slot = line.substring(8, c1).toInt();
+    if (slot < 0 || slot >= DECK_MAX) return;
+    uint8_t flags = line.substring(c1 + 1, c2).toInt() ? EMO_FLAG_DECK_LAST : 0;
+    if (b64decode(line.substring(c2 + 1), deckSave, sizeof(deckSave)) != (int)sizeof(deckSave))
+      return;                              // short/garbled image: no ack, host retries
+    deckStore(slot, flags);
+    char ev[16];
+    snprintf(ev, sizeof(ev), "DECKOK:%u", (unsigned)slot);
+    emitEvent(ev);
+    return;
+  }
+  if (line.startsWith("DECKSIG:")) {       // host records what this deck is
+    deckSig = line.substring(8);
+    prefs.putString("decksig", deckSig);
+    return;
+  }
+  if (line == "DECKSIG") {                 // ...and asks, to skip a resync
+    // an empty deck can't match any signature, however NVS survived
+    emitEvent(("DECKSIG:" + (deckN ? deckSig : String())).c_str());
+    return;
+  }
   if (line.startsWith("EMOJI:")) {
     lastCmd = millis();
     int n = b64decode(line.substring(6), (uint8_t *)emojiBuf, sizeof(emojiBuf));
@@ -1028,6 +1064,7 @@ void setup() {
   touchInit();
   prefs.begin("onit", false);
   tzStr = prefs.getString("tz", "");
+  deckSig = prefs.getString("decksig", "");
   if (tzStr.length()) { setenv("TZ", tzStr.c_str(), 1); tzset(); }
   LittleFS.begin(true);           // mounts the default "spiffs" data partition
   LittleFS.mkdir("/deck");

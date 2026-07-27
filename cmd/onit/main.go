@@ -463,7 +463,7 @@ func main() {
 		if st.DeckSyncing {
 			dev = append(dev, syncItem)
 		}
-		if st.Transport == "ble" {
+		if st.Transport != "" { // the deck syncs over either link now
 			dev = append(dev, spinItem)
 		}
 		if st.PairingLost {

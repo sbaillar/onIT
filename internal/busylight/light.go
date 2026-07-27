@@ -47,6 +47,12 @@ type Light struct {
 	deckSource  atomic.Value     // func() (sig string, render func() [][]byte)
 	deckSyncing atomic.Bool      // a deck upload is in flight (see SyncDeck)
 
+	// replies to serial deck traffic, routed out of the reader goroutine.
+	// Buffered by one and written non-blocking: a reply nobody is waiting
+	// for is dropped rather than stalling the reader.
+	serialDeckAck chan byte
+	serialDeckSig chan string
+
 	mu  sync.Mutex
 	ble bleLink    // nil until a device is bonded (see ble.go)
 	dev *BLEDevice // in-memory bonded record (Deck/Sig cache); nil when none
@@ -68,7 +74,10 @@ func (l *Light) SetDeckSource(f func() (sig string, render func() [][]byte)) {
 }
 
 func NewLight() *Light {
-	l := &Light{}
+	l := &Light{
+		serialDeckAck: make(chan byte, 1),
+		serialDeckSig: make(chan string, 1),
+	}
 	l.serial = newSerialTransport(l.handleTouch)
 	l.usb = l.serial
 	if dev := loadBLEDevice(); dev != nil {
@@ -136,15 +145,33 @@ func (l *Light) handleTouch(line string) {
 		}
 		return
 	}
+	// deck-upload replies belong to whoever is running a serial sync
+	if s, ok := strings.CutPrefix(line, "DECKOK:"); ok {
+		if slot, err := strconv.Atoi(s); err == nil {
+			select {
+			case l.serialDeckAck <- byte(slot):
+			default:
+			}
+		}
+		return
+	}
+	if s, ok := strings.CutPrefix(line, "DECKSIG:"); ok {
+		select {
+		case l.serialDeckSig <- s:
+		default:
+		}
+		return
+	}
 	// A serial VERSION banner means the board just booted or the port just
 	// opened (opening resets it), so its clock is unset — this is the USB
 	// counterpart of handleBLEConnect. Off this goroutine: it is the reader,
-	// and PushClock writes.
+	// and both of these write.
 	if strings.HasPrefix(line, "VERSION:") {
 		go func() {
 			if err := l.PushClock(); err != nil {
 				log.Printf("clock push failed: %v", err)
 			}
+			l.syncDeckSerial()
 		}()
 	}
 }

@@ -74,9 +74,9 @@ two a day. There's nothing to configure: no Wi-Fi, no credentials. A power
 cut clears it, since neither board has a battery-backed clock, and the face
 stays dimmed and hand-less until onIT next connects. **Emoji roulette**:
 tap the clock to spin a wheel of your top emojis (synced to the device in
-the background) — fast cycling eases out over ~5 s and the winner stays
-until you spin again or the computer reconnects. "Spin the wheel" in the
-tray does the same while connected. Pairing mode: hold the face for 10
+the background over either link) — fast cycling eases out over ~5 s and the
+winner stays until you spin again or the computer reconnects. "Spin the
+wheel" in the tray does the same while connected. Pairing mode: hold the face for 10
 seconds (a progress ring fills), then pair from the tray within 2 minutes.
 
 ## States
@@ -163,6 +163,8 @@ make windows    # dist/onitctl.exe
 | host → device | `STATE:available\|meeting\|sharing\|off` | show a state (host repeats every 2 s; device blanks after 5 s of silence) |
 | host → device | `VERSION` | ask for firmware version |
 | host → device | `TZ:<posix-tz>` / `TIME:<unix>` | set the standalone clock (sent on connect and every 30 min) |
+| host → device | `DECKIMG:<slot>:<last>:<base64>` | upload one roulette-deck image; device replies `DECKOK:<slot>` |
+| host → device | `DECKSIG:<sig>` / `DECKSIG` | set / query the deck the device holds, so an unchanged deck isn't re-sent |
 | device → host | `VERSION:x.y.z[:board]` | at boot and on query; board tag `lcd128`/`amoled175` (absent on legacy 1.28" firmware) |
 
 Over BLE the same command lines ride a GATT write characteristic, emoji
