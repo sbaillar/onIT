@@ -14,6 +14,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
@@ -112,6 +113,11 @@ func main() {
 	var lastEmoji fyne.Resource // image last sent to the device, for the face
 	capLbl := widget.NewLabel("starting...")
 	capLbl.Importance = widget.LowImportance
+	// Bluetooth indicator (floated top-right below): lit while the BLE link
+	// is carrying the device, dim otherwise. Runic berkanan is the glyph.
+	bleIcon := canvas.NewText("ᛒ", bleIconDim)
+	bleIcon.TextSize = 18
+	bleIcon.TextStyle = fyne.TextStyle{Bold: true}
 	busyBar := widget.NewProgressBarInfinite()
 	busyBar.Stop()
 	busyBar.Hide()
@@ -564,6 +570,15 @@ func main() {
 		}
 		capLbl.SetText(src + "  /  " + light)
 
+		wantBLE := bleIconDim
+		if st.Transport == "ble" {
+			wantBLE = bleIconLit
+		}
+		if bleIcon.Color != wantBLE {
+			bleIcon.Color = wantBLE
+			bleIcon.Refresh()
+		}
+
 		shownKey := stateKey(st.Shown)
 		for i, c := range choices {
 			want := widget.MediumImportance
@@ -722,8 +737,9 @@ func main() {
 			widget.NewSeparator(),
 			settings,
 		),
-		container.NewBorder( // floats over the face's empty corner
-			container.NewHBox(helpBtn, layout.NewSpacer()), nil, nil, nil, nil),
+		container.NewBorder( // floats over the face's empty corners
+			container.NewHBox(helpBtn, layout.NewSpacer(),
+				container.NewPadded(bleIcon)), nil, nil, nil, nil),
 	))
 
 	w.Resize(fyne.NewSize(260, 0)) // height from content; keep it compact

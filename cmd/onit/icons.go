@@ -65,3 +65,11 @@ func activeDotResource(state string) fyne.Resource {
 	}
 	return activeDots["off"]
 }
+
+// Bluetooth indicator colors: lit when the BLE link is live, dim otherwise.
+// The dim tone is the device palette's own gray (#585858), so the icon reads
+// as "off" rather than as a disabled control.
+var (
+	bleIconLit = color.NRGBA{0x4A, 0x9E, 0xFF, 0xFF}
+	bleIconDim = color.NRGBA{0x58, 0x58, 0x58, 0xFF}
+)
