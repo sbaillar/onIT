@@ -68,9 +68,21 @@ func bleConnect(deviceID string) (bluetooth.Device, error) {
 	if err != nil {
 		return bluetooth.Device{}, err
 	}
-	return adapter.Connect(bluetooth.Address{UUID: uu}, bluetooth.ConnectionParams{
+	dev, err := adapter.Connect(bluetooth.Address{UUID: uu}, bluetooth.ConnectionParams{
 		ConnectionTimeout: bluetooth.NewDuration(5 * time.Second),
 	})
+	if err != nil {
+		return bluetooth.Device{}, err
+	}
+	// When CoreBluetooth reports the peripheral disconnected before our own
+	// connect timer fires, tinygo returns a zero Device with a nil error
+	// (gap_darwin.go: `return Device{}, connectionError` with connectionError
+	// still nil). Using it panics — every method dereferences the nil
+	// deviceInternal. Treat it as the failed connect it is.
+	if dev == (bluetooth.Device{}) {
+		return bluetooth.Device{}, errors.New("connect failed (device disconnected during connect)")
+	}
+	return dev, nil
 }
 
 // bleChars discovers the onIT service and returns its three characteristics.
