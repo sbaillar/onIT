@@ -417,35 +417,6 @@ func main() {
 		fyne.NewMenuItemSeparator(),
 		emojiParent, msgParent,
 	)
-	doUninstall := func() {
-		w.Show()
-		dialog.ShowConfirm("Uninstall onIT",
-			"This removes the start-at-login entry, sign-in tokens,\n"+
-				"all settings, and the app itself. The device is not affected.\n\nContinue?",
-			func(ok bool) {
-				if !ok {
-					return
-				}
-				if err := setAutostart(false); err != nil {
-					log.Printf("uninstall: autostart: %v", err)
-				}
-				if err := busylight.RemoveToken(); err != nil {
-					log.Printf("uninstall: token: %v", err)
-				}
-				for _, d := range prefsDirs() {
-					os.RemoveAll(d)
-				}
-				os.Remove(pidFilePath())
-				os.Remove(logPath())
-				if err := removeInstalledFiles(); err != nil {
-					log.Printf("uninstall: app files: %v", err)
-				}
-				done := dialog.NewInformation("Uninstalled", uninstallDoneMsg, w)
-				done.SetOnClosed(a.Quit)
-				done.Show()
-			}, w)
-	}
-
 	// device section: live transport indicator plus BLE pairing. Its rows
 	// come and go with bond state (fyne.MenuItem cannot hide), so the tray
 	// item list is recomposed from menuItems + section + menuTail on update.
@@ -505,12 +476,18 @@ func main() {
 	syncItem.Disabled = true // indicator line, not clickable (renders dimmed)
 
 	var showSettings func() // assigned once the settings window exists
+	// Marked IsQuit so Fyne doesn't append a second Quit of its own
+	// (addMissingQuitForMenu only adds one when the last item isn't a quit),
+	// which means it has to stay last.
+	quitItem := fyne.NewMenuItem("Quit onIT", func() { a.Quit() })
+	quitItem.IsQuit = true
 	menuTail := []*fyne.MenuItem{
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Settings...", func() { showSettings() }),
+		fyne.NewMenuItem("Show log...", func() { showLog(a) }),
 		fyne.NewMenuItem("Check for updates...", func() { w.Show(); checkForUpdates(w, prefs.Bool(betaKey)) }),
 		fyne.NewMenuItemSeparator(),
-		fyne.NewMenuItem("Uninstall onIT...", doUninstall),
+		quitItem,
 	}
 	trayMenu := fyne.NewMenu("onIT")
 	rebuildTray := func(st busylight.Status) {
