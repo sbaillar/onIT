@@ -17,6 +17,7 @@ import (
 
 	"onit/internal/busylight"
 	"onit/internal/emoji"
+	"sync"
 	"time"
 )
 
@@ -302,9 +303,18 @@ func showEmojiPicker(a fyne.App, agent *busylight.Agent, setBusy func(bool), onP
 	w.Show()
 }
 
-// emojiRes wraps an emoji entry as a Fyne image resource.
+// emojiRes wraps an emoji entry as a Fyne image resource. Cached: PNG()
+// copies out of the embedded FS on every call, and the spin animation asks
+// for one per frame.
+var emojiResCache sync.Map // slug -> fyne.Resource
+
 func emojiRes(e emoji.Entry) fyne.Resource {
-	return fyne.NewStaticResource(e.Slug+".png", e.PNG())
+	if r, ok := emojiResCache.Load(e.Slug); ok {
+		return r.(fyne.Resource)
+	}
+	r := fyne.Resource(fyne.NewStaticResource(e.Slug+".png", e.PNG()))
+	emojiResCache.Store(e.Slug, r)
+	return r
 }
 
 // The roulette curve, mirroring firmware/busylight_round*.ino (startSpin and

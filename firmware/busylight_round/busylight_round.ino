@@ -76,7 +76,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28 for your revision.
  */
 
-#define FW_VERSION "1.13.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.13.1"   // extracted by `make firmware`, embedded in onIT
 #define BOARD_TAG  "lcd128"
 
 #include <Arduino_GFX_Library.h>
@@ -687,6 +687,10 @@ void drawProgressRing(unsigned long held, int &lastDeg) {
   if (lastDeg < 0) ringSolid(PROG_R, PROG_W, C_GRAY_RING);   // gray track, once
   int deg = (int)(((long)held - (long)HOLD_RING_MS) * 360 / (long)(HOLD_PAIR_MS - HOLD_RING_MS));
   if (deg < 0) deg = 0; else if (deg > 360) deg = 360;
+  // repaint in 6° steps (60 over the gesture, still reads as continuous):
+  // a redraw costs a whole-framebuffer push on the AMOLED, and at every
+  // poll that starved serial, BLE and touch for much of the hold
+  if (deg != 360 && deg - lastDeg < 6) return;
   if (deg == lastDeg) return;
   lastDeg = deg;
   arcClockwiseFromTop(PROG_R, PROG_R - PROG_W, deg, C_GREEN);

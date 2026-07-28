@@ -83,7 +83,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75 for your revision.
  */
 
-#define FW_VERSION "1.6.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.6.1"   // extracted by `make firmware`, embedded in onIT
 #define BOARD_TAG  "amoled175"
 
 #include <Arduino_GFX_Library.h>
@@ -358,17 +358,15 @@ void drawEmoji() {
     return;
   }
   // 4x pixel-quadrupled: 120x120 -> 480x480, centered (7px cropped per edge,
-  // invisible on the round panel)
-  static uint16_t row[SCREEN_W];
-  int lastSy = -1;
-  for (int y = 0; y < SCREEN_W; y++) {
-    int sy = (y + 7) >> 2;
-    if (sy != lastSy) {
-      lastSy = sy;
-      const uint16_t *src = &emojiBuf[sy * 120];
-      for (int x = 0; x < SCREEN_W; x++) row[x] = src[(x + 7) >> 2];
-    }
-    gfx->draw16bitRGBBitmap(0, y, row, SCREEN_W, 1);
+  // invisible on the round panel). Written a column at a time, not a row:
+  // the canvas rotates as it stores, so drawing coords (x, 0..465) land on
+  // consecutive framebuffer words, where a row would stride 932 bytes a
+  // pixel and miss the cache on every one of 217k writes.
+  static uint16_t col[SCREEN_W];
+  for (int x = 0; x < SCREEN_W; x++) {
+    const int sx = (x + 7) >> 2;
+    for (int y = 0; y < SCREEN_W; y++) col[y] = emojiBuf[((y + 7) >> 2) * 120 + sx];
+    gfx->draw16bitRGBBitmap(x, 0, col, 1, SCREEN_W);
   }
   brightness(80);
   present();
@@ -725,6 +723,10 @@ void drawProgressRing(unsigned long held, int &lastDeg) {
   if (lastDeg < 0) ringSolid(PROG_R, PROG_W, C_GRAY_RING);   // gray track, once
   int deg = (int)(((long)held - (long)HOLD_RING_MS) * 360 / (long)(HOLD_PAIR_MS - HOLD_RING_MS));
   if (deg < 0) deg = 0; else if (deg > 360) deg = 360;
+  // repaint in 6° steps (60 over the gesture, still reads as continuous):
+  // a redraw costs a whole-framebuffer push on the AMOLED, and at every
+  // poll that starved serial, BLE and touch for much of the hold
+  if (deg != 360 && deg - lastDeg < 6) return;
   if (deg == lastDeg) return;
   lastDeg = deg;
   arcClockwiseFromTop(PROG_R, PROG_R - PROG_W, deg, C_GREEN);

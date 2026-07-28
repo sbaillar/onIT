@@ -472,7 +472,7 @@ func main() {
 				res := emojiRes(deck[i%len(deck)])
 				fyne.Do(func() {
 					lastEmoji = res
-					update()
+					face.Set("emoji", res) // face only: update() rebuilds the tray
 				})
 			}
 		}()

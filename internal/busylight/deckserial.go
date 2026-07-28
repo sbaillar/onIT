@@ -17,7 +17,8 @@ import (
 // would be silently wrong — so instead the device stores the signature of
 // the deck it holds and reports it on request. Nothing is uploaded when it
 // already matches; when it doesn't, the whole deck goes, which is rare (only
-// when the emoji list itself changes) and costs about a minute at 115200.
+// when the emoji list itself changes) and costs a few seconds — writePaced,
+// not the nominal baud, sets the rate.
 const (
 	deckAckTimeout = 15 * time.Second // one image: transfer + LittleFS write
 	deckSigTimeout = 3 * time.Second  // firmware predating DECKSIG never answers
