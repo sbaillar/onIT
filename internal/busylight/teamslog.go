@@ -87,7 +87,11 @@ func (a *Agent) teamsLogSession() error {
 	}
 	defer f.Close()
 
-	// seed from the tail so a mid-session start shows the current state
+	// seed from the tail so a mid-session start shows the current state —
+	// the *current* one only. Applying every state found in the tail walked
+	// the light through the whole recent history on each start, and since
+	// this runs again after every rotation or stale reader, that read as the
+	// light flapping between states seconds apart.
 	st, err := f.Stat()
 	if err != nil {
 		return err
@@ -96,10 +100,14 @@ func (a *Agent) teamsLogSession() error {
 	seedFrom := max(0, pos-teamsLogSeedSize)
 	buf := make([]byte, pos-seedFrom)
 	if _, err := f.ReadAt(buf, seedFrom); err == nil {
+		seed := ""
 		for _, line := range strings.Split(string(buf), "\n") {
 			if state, ok := parsePresenceLine(line); ok {
-				a.setTeams(true, state)
+				seed = state
 			}
+		}
+		if seed != "" {
+			a.setTeams(true, seed)
 		}
 	}
 

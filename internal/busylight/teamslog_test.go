@@ -103,3 +103,34 @@ func waitFor(t *testing.T, cond func() bool, what string) {
 		}
 	}
 }
+
+// Seeding must apply only the newest state in the tail. Applying each one in
+// turn walked the light through the whole recent history — and because the
+// session restarts on every log rotation, that read as the light flapping
+// between states every few seconds.
+func TestTeamsLogSessionSeedsOnlyCurrentState(t *testing.T) {
+	dir := t.TempDir()
+	oldGlobs, oldTick := teamsLogGlobs, teamsLogTick
+	teamsLogGlobs = []string{filepath.Join(dir, "MSTeams_*.log")}
+	teamsLogTick = 10 * time.Millisecond
+	defer func() { teamsLogGlobs, teamsLogTick = oldGlobs, oldTick }()
+
+	// a history ending on Presenting
+	path := filepath.Join(dir, "MSTeams_2026-07-23.log")
+	os.WriteFile(path, []byte(
+		"{ user id :x, availability: Available, unread notification count: 0 }\n"+
+			"{ user id :x, availability: InACall, unread notification count: 0 }\n"+
+			"{ user id :x, availability: Presenting, unread notification count: 0 }\n"), 0o644)
+
+	a := NewAgent()
+	var seen []string
+	a.OnChange(func() { seen = append(seen, a.Status().Shown) })
+	go a.teamsLogSession()
+
+	waitFor(t, func() bool { return a.Status().Shown == "sharing" }, "seeded to the newest state")
+	for _, s := range seen {
+		if s == "meeting" {
+			t.Fatalf("replayed an intermediate state: %v", seen)
+		}
+	}
+}

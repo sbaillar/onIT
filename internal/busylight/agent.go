@@ -2,6 +2,7 @@ package busylight
 
 import (
 	"context"
+	"errors"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -320,7 +321,15 @@ func (a *Agent) Run() {
 		}
 		log.Printf("presence source down (%v)", err)
 		a.setSource("")
-		a.setTeams(false, "off")
+		// Only a real outage blanks the light. A sourceSwitch is a handover —
+		// the Teams log rotated, Graph signed out — where presence itself
+		// hasn't changed, only our way of reading it; blanking there dropped
+		// the device to its standalone clock for the length of the retry and
+		// back, every time Teams rotated its log.
+		var handover *sourceSwitch
+		if !errors.As(err, &handover) {
+			a.setTeams(false, "off")
+		}
 		time.Sleep(retryWait)
 	}
 }
