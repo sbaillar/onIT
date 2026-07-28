@@ -83,7 +83,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75 for your revision.
  */
 
-#define FW_VERSION "1.4.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.4.1"   // extracted by `make firmware`, embedded in onIT
 
 #include <Arduino_GFX_Library.h>
 #include <Adafruit_GFX.h>   // only for its Fonts/ include path
@@ -167,7 +167,7 @@ const uint16_t FLASH_LUT[8] = {
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
     LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
 Arduino_CO5300 *gfx = new Arduino_CO5300(
-    bus, LCD_RST, 1 /*rotation: 90° clockwise*/, SCREEN_W, SCREEN_W, 6, 0, 0, 0);
+    bus, LCD_RST, 0 /*rotation*/, SCREEN_W, SCREEN_W, 6, 0, 0, 0);
 
 TouchDrvCST92xx touch;
 bool touchOk = false;
