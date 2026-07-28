@@ -4,6 +4,11 @@ VERSION := 1.18.0-dev4
 DIST    := dist
 FYNE    := go run fyne.io/tools/cmd/fyne@v1.7.2
 GOFLAGS := -trimpath -ldflags "-s -w"
+# Code-signing identity for the .app (see README "Signing"). Stable across
+# builds, so macOS keeps the Bluetooth grant instead of re-asking each time.
+# Empty = ad-hoc, which still runs but re-prompts after every rebuild.
+SIGN_ID := $(shell security find-identity -v -p codesigning 2>/dev/null | \
+             sed -n 's/.*"\(onIT Dev\)"/\1/p' | head -1)
 APPLDFLAGS := -trimpath -ldflags "-s -w -X main.appVersion=$(VERSION)"
 
 ESPTOOL_VERSION := v5.3.1
@@ -77,6 +82,18 @@ app: $(ESPTOOL)
 		"Add :NSBluetoothAlwaysUsageDescription string 'onIT connects to your busylight over Bluetooth.'" \
 		$(DIST)/$(APP).app/Contents/Info.plist
 	cp $(ESPTOOL) $(DIST)/$(APP).app/Contents/Resources/esptool
+	# Sign last, once the bundle is final — editing it afterwards breaks the
+	# seal. macOS ties privacy grants (Bluetooth) to the signing identity, so
+	# an ad-hoc signature, whose identity is the code hash, asks again after
+	# every rebuild. Signing with a stable identity makes the grant stick.
+	# SIGN_ID= skips it (ad-hoc); see README for creating the certificate.
+	@if [ -n "$(SIGN_ID)" ]; then \
+		echo "codesign --sign '$(SIGN_ID)' $(DIST)/$(APP).app"; \
+		codesign --force --deep --options runtime --sign "$(SIGN_ID)" \
+			$(DIST)/$(APP).app || exit 1; \
+	else \
+		echo "SIGN_ID unset: leaving the bundle ad-hoc signed"; \
+	fi
 
 # macOS installer: onIT.app + headless CLI in /usr/local/bin
 # (unsigned: first launch needs right-click > Open)

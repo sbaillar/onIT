@@ -143,6 +143,40 @@ make pkg        # dist/onIT-<version>-macos-arm64.pkg (app + onitctl + esptool)
 make windows    # dist/onitctl.exe
 ```
 
+### Signing (macOS)
+
+`make app` signs the bundle with the `onIT Dev` code-signing identity when
+one is present in the keychain, and falls back to ad-hoc otherwise. This is
+not about Gatekeeper — an unsigned build runs fine after right-click →
+**Open** — it's about privacy grants. macOS ties the Bluetooth permission to
+the app's *signing identity*, and an ad-hoc signature's identity is its code
+hash, so every rebuild looks like a brand-new app and re-prompts. Signing
+with a stable certificate makes the grant persist.
+
+To create the identity on a new machine (once):
+
+```bash
+openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+  -keyout key.pem -out cert.pem -subj "/CN=onIT Dev/O=onIT" \
+  -addext "basicConstraints=critical,CA:false" \
+  -addext "keyUsage=critical,digitalSignature" \
+  -addext "extendedKeyUsage=critical,codeSigning"
+# macOS can't read OpenSSL 3's default PKCS#12 encryption; force the old one
+openssl pkcs12 -export -out onit-dev.p12 -inkey key.pem -in cert.pem \
+  -name "onIT Dev" -passout pass:onit \
+  -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
+security import onit-dev.p12 -k ~/Library/Keychains/login.keychain-db \
+  -P onit -T /usr/bin/codesign
+# self-signed certs need explicit code-signing trust (asks for your password)
+security add-trusted-cert -r trustRoot -p codeSign \
+  -k ~/Library/Keychains/login.keychain-db cert.pem
+security find-identity -v -p codesigning   # should list "onIT Dev"
+```
+
+Or copy the identity between machines by exporting it from Keychain Access.
+`make app SIGN_ID=` forces an ad-hoc build; `SIGN_ID="Developer ID Application: ..."`
+uses a real Apple identity if you have one.
+
 `onitctl -ports` lists serial ports if the device isn't detected
 (the app matches USB IDs 303A:1001 and 1A86:55D3 — add yours in
 `internal/busylight/light.go`).
