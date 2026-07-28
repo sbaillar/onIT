@@ -83,7 +83,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75 for your revision.
  */
 
-#define FW_VERSION "1.4.2"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.5.0"   // extracted by `make firmware`, embedded in onIT
 
 #include <Arduino_GFX_Library.h>
 #include <Adafruit_GFX.h>   // only for its Fonts/ include path
@@ -166,9 +166,16 @@ const uint16_t FLASH_LUT[8] = {
 // ---------------------------------------------------------------- display
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
     LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
-Arduino_CO5300 *gfx = new Arduino_CO5300(
-    // rotation 3, not 1: on this panel index 1 turns counter-clockwise
-    bus, LCD_RST, 3 /*rotation: 90° clockwise*/, SCREEN_W, SCREEN_W, 6, 0, 0, 0);
+// The CO5300 cannot rotate: its MADCTL offers only X/Y mirroring, so the
+// driver's rotation 1 and 3 are flips, not turns (1 reads mirrored, 3 looks
+// unrotated). To actually turn the picture we draw into a framebuffer that
+// rotates in software and push that to the panel — 466*466*2 = 434 KB, which
+// lands in PSRAM (large allocations do). Canvas rotation 1 turns the picture
+// 90° clockwise, which puts the USB socket at 6 o'clock.
+Arduino_CO5300 *panel = new Arduino_CO5300(
+    bus, LCD_RST, 0 /*panel itself unrotated*/, SCREEN_W, SCREEN_W, 6, 0, 0, 0);
+Arduino_Canvas *gfx = new Arduino_Canvas(
+    SCREEN_W, SCREEN_W, panel, 0, 0, 1 /*rotation: 90° clockwise*/);
 
 TouchDrvCST92xx touch;
 bool touchOk = false;
@@ -240,8 +247,12 @@ float rouletteIval = 60.0f;
 uint8_t rouletteWinner = 0, rouletteIdx = 0;
 
 // ---------------------------------------------------------------- brightness (AMOLED: panel command, no backlight pin)
-void brightness(uint8_t pct) {         // 0-100
-  gfx->setBrightness((uint32_t)pct * 255 / 100);
+// present pushes the framebuffer to the panel; every painting routine ends
+// with it, so nothing is drawn without being shown.
+inline void present() { gfx->flush(); }
+
+void brightness(uint8_t pct) {         // 0-100 (a panel command, not a canvas one)
+  panel->setBrightness((uint32_t)pct * 255 / 100);
 }
 
 // ---------------------------------------------------------------- helpers
@@ -292,6 +303,7 @@ void drawAvailable() {
   gfx->fillCircle(CENTER, 179, 21, C_WHITE);             // presence dot above text
   textCentered("Available", 264, &FreeSansBold18pt7b, C_WHITE);
   brightness(100);
+  present();
 }
 
 void drawMeeting() {
@@ -300,6 +312,7 @@ void drawMeeting() {
   iconMic(CENTER, 155, C_WHITE);
   textCentered("In a call", 283, &FreeSansBold18pt7b, C_WHITE);
   brightness(100);
+  present();
 }
 
 void drawSharing() {
@@ -309,6 +322,7 @@ void drawSharing() {
   textCentered("Presenting", 260, &FreeSansBold18pt7b, C_WHITE);
   textCentered("Do not disturb", 318, &FreeSansBold9pt7b, C_LAVENDER);
   brightness(100);
+  present();
 }
 
 // minimal base64 decoder (standard alphabet); returns bytes written
@@ -339,6 +353,7 @@ void drawEmoji() {
     gfx->fillScreen(C_BG_IDLE);
     textCentered("?", 252, &FreeSansBold18pt7b, C_GRAY_TEXT);
     brightness(70);
+    present();
     return;
   }
   // 4x pixel-quadrupled: 120x120 -> 480x480, centered (7px cropped per edge,
@@ -355,6 +370,7 @@ void drawEmoji() {
     gfx->draw16bitRGBBitmap(0, y, row, SCREEN_W, 1);
   }
   brightness(80);
+  present();
 }
 
 uint16_t textW(const char *s, const GFXfont *f, uint8_t scale) {
@@ -424,7 +440,7 @@ void drawCustom() {
     }
   }
   if (words[wc].length()) wc++;
-  if (!wc) return;
+  if (!wc) { present(); return; }
 
   // biggest first: the 240px ladder doubled for the 466px panel
   struct { const GFXfont *f; uint8_t s; } steps[6] = {
@@ -441,10 +457,12 @@ void drawCustom() {
       float top = CENTER - lineH * n / 2;
       for (int i = 0; i < n; i++)
         textCenteredS(lines[i].c_str(), (int16_t)(top + lineH * (i + 0.5f)), steps[fi].f, steps[fi].s, customFg);
+      present();
       return;
     }
   }
   textCenteredS(customText.c_str(), CENTER, &FreeSansBold9pt7b, 2, customFg); // best effort
+  present();
 }
 
 void drawFlashing() {
@@ -453,6 +471,7 @@ void drawFlashing() {
   textCentered("Flashing", 217, &FreeSansBold18pt7b, C_WHITE);
   textCentered("do not power off", 295, &FreeSansBold9pt7b, C_WHITE);
   brightness(100);
+  present();
 }
 
 // ---- standalone analog clock (replaces the old "- -" OFF screen)
@@ -487,6 +506,7 @@ void drawClockHands() {
   gfx->fillCircle(CENTER, CENTER, 5, C_BG_IDLE);
   prevHA = ha; prevMA = ma; prevSA = sa;
   prevHandsValid = true;
+  present();
 }
 
 void drawClock() {
@@ -508,9 +528,10 @@ void drawClock() {
   if (timeValid) {
     drawClockHands();
     brightness(35);
-  } else {
-    brightness(10);                                      // dimmed face, no hands
+    return;                                              // drawClockHands presented it
   }
+  brightness(10);                                        // dimmed face, no hands
+  present();
 }
 
 // 1 Hz hand update while the clock is showing (polled at most every 200 ms so
@@ -534,6 +555,7 @@ void drawToast(const char *msg) {
   textCentered(msg, 233, &FreeSansBold9pt7b, C_YELLOW);
   brightness(35);
   prevHandsValid = false;
+  present();
   toastUntil = millis() + 2000;
 }
 
@@ -641,6 +663,7 @@ void drawPairing(uint32_t passkey) {
   textCenteredS(code, 233, &FreeSansBold24pt7b, 3, C_WHITE);
   textCentered("enter this code", 336, &FreeSansBold9pt7b, C_GRAY_TEXT);
   brightness(100);
+  present();
 }
 
 // an overlay (pairing screen or a toast) currently owns the panel: animators
@@ -704,6 +727,7 @@ void drawProgressRing(unsigned long held, int &lastDeg) {
   if (deg == lastDeg) return;
   lastDeg = deg;
   arcClockwiseFromTop(PROG_R, PROG_R - PROG_W, deg, C_GREEN);
+  present();
 }
 
 // theme-styled pairing prompt: title + advertised device name
@@ -714,6 +738,7 @@ void drawPairScreen() {
   textCentered(bleName, 250, &FreeSansBold9pt7b, C_LAVENDER);
   textCentered("hold 10s to exit", 320, &FreeSansBold9pt7b, C_GRAY_TEXT);
   brightness(100);
+  present();
 }
 
 void enterPairing() {
@@ -1168,14 +1193,14 @@ void loop() {
   if (state == ST_SHARING && !overlayActive()) {
     static int lastStep = -1;
     int step = (millis() % 1500) / 187;                  // 1500/8
-    if (step != lastStep) { lastStep = step; ringSolid(RING_R, 16, PULSE_LUT[step]); }
+    if (step != lastStep) { lastStep = step; ringSolid(RING_R, 16, PULSE_LUT[step]); present(); }
   }
 
   // flashing ring pulse: faster, red, 1s period
   if (state == ST_FLASHING && !overlayActive()) {
     static int lastF = -1;
     int step = (millis() % 1000) / 125;                  // 1000/8
-    if (step != lastF) { lastF = step; ringSolid(RING_R, 16, FLASH_LUT[step]); }
+    if (step != lastF) { lastF = step; ringSolid(RING_R, 16, FLASH_LUT[step]); present(); }
   }
 
   delay(10);
