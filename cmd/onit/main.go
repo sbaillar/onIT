@@ -365,6 +365,15 @@ func main() {
 	})
 	betaCheck.SetChecked(prefs.Bool(betaKey))
 
+	// Verbose logging: every protocol line in both directions, for working
+	// out what a misbehaving device and app are actually saying to each other.
+	verboseCheck := widget.NewCheck("Verbose logging (protocol lines)", func(on bool) {
+		prefs.SetBool(verboseKey, on)
+		busylight.Verbose.Store(on)
+	})
+	verboseCheck.SetChecked(prefs.Bool(verboseKey))
+	busylight.Verbose.Store(prefs.Bool(verboseKey))
+
 	loginCheck := widget.NewCheck("Start at login", nil)
 	loginCheck.SetChecked(autostartEnabled())
 	loginCheck.OnChanged = func(on bool) {
@@ -748,7 +757,7 @@ func main() {
 	// Built once and hidden on close so update() keeps its widget pointers.
 	settingsWin := a.NewWindow("onIT Settings")
 	settingsWin.SetContent(container.NewVBox(
-		fwLbl, fwBtn, graphSetupBtn, remoteCheck, micCheck, betaCheck, loginCheck))
+		fwLbl, fwBtn, graphSetupBtn, remoteCheck, micCheck, betaCheck, verboseCheck, loginCheck))
 	settingsWin.SetCloseIntercept(settingsWin.Hide)
 	settingsWin.Resize(fyne.NewSize(300, 0))
 	showSettings = func() { settingsWin.Show(); settingsWin.RequestFocus() }

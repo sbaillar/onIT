@@ -145,6 +145,7 @@ func (l *Light) handleBLEEvent(line string) {
 // handleDeviceEvent dispatches a line the device sent — over either link,
 // since the serial transport and handleBLEEvent both feed it here.
 func (l *Light) handleDeviceEvent(line string) {
+	logLine("<-", line)
 	if kind, ok := strings.CutPrefix(line, "TOUCH:"); ok {
 		if f, _ := l.onTouch.Load().(func(string)); f != nil {
 			go f(kind)
@@ -266,6 +267,24 @@ func (l *Light) SendLine(line string) bool {
 	return l.sendLine(line)
 }
 
+// Verbose logs every protocol line in both directions. Off by default: it is
+// a few lines a second. Worth having because the interesting failures so far
+// have been ones where the app believed nothing was happening.
+var Verbose atomic.Bool
+
+// logLine records one protocol line when verbose logging is on. Long payloads
+// (emoji, deck images) are summarised rather than dumped.
+func logLine(dir, line string) {
+	if !Verbose.Load() {
+		return
+	}
+	if len(line) > 60 {
+		log.Printf("%s %.40s... (%d bytes)", dir, line, len(line))
+		return
+	}
+	log.Printf("%s %s", dir, line)
+}
+
 // sendLine tries each transport in policy order until one accepts the line.
 // Refuses outright while a flash is running: esptool owns the serial port
 // then, and a write here would reopen it underneath a device mid-erase. The
@@ -278,9 +297,11 @@ func (l *Light) sendLine(line string) bool {
 	}
 	for _, t := range l.transports() {
 		if t.sendLine(line) {
+			logLine("->", line)
 			return true
 		}
 	}
+	logLine("-> FAILED", line)
 	return false
 }
 

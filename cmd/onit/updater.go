@@ -25,6 +25,8 @@ const (
 	releaseListAPI = "https://api.github.com/repos/sbaillar/onIT/releases?per_page=20"
 	// betaKey is the preference: opt in to prerelease builds
 	betaKey = "betaUpdates"
+	// verboseKey is the preference: log every protocol line
+	verboseKey = "verboseLogging"
 )
 
 type release struct {
