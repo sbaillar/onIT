@@ -76,7 +76,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28 for your revision.
  */
 
-#define FW_VERSION "1.14.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.14.1"   // extracted by `make firmware`, embedded in onIT
 #define BOARD_TAG  "lcd128"
 
 #include <Arduino_GFX_Library.h>
@@ -230,6 +230,11 @@ uint8_t rouletteWinner = 0, rouletteIdx = 0;
 void brightness(uint8_t pct) {         // 0-100
   ledcWrite(LCD_BL, (uint32_t)pct * 255 / 100);
 }
+
+// elapsed reports whether a millis() deadline has passed, correctly across
+// the 49.7-day wrap (a bare `millis() > deadline` reopens the boot pairing
+// window when the counter returns to 0).
+bool elapsed(unsigned long deadline) { return (long)(millis() - deadline) >= 0; }
 
 // ---------------------------------------------------------------- helpers
 void ringSolid(int16_t r, int16_t w, uint16_t color) {
@@ -602,7 +607,7 @@ void startSpin() {
 void roulettePoll() {
   if (state != ST_ROULETTE_SPIN) return;
   unsigned long now = millis();
-  if (now < rouletteNext) return;
+  if (!elapsed(rouletteNext)) return;
   if (now - rouletteStart >= 5000) {                     // settle on the winner
     if (deckLoad(rouletteWinner)) emojiValid = true;
     state = ST_ROULETTE_WINNER;
@@ -634,7 +639,7 @@ void drawPairing(uint32_t passkey) {
 // an overlay (pairing screen or a toast) currently owns the panel: animators
 // must not paint over it. drawPairScreen()/drawToast() forward-declared below.
 void drawPairScreen();
-bool overlayActive() { return pairingMode || toastUntil; }
+bool overlayActive() { return pairingMode || toastUntil || shownPasskey; }
 
 // states that survive a liveness loss (BLE drop / USB watchdog) instead of
 // falling back to the standalone clock: a flash-in-progress and a roulette.
@@ -801,7 +806,6 @@ void handleLine(const String &line) {
     uint8_t flags = line.substring(c1 + 1, c2).toInt() ? EMO_FLAG_DECK_LAST : 0;
     if (b64decode(line, deckSave, sizeof(deckSave), c2 + 1) != (int)sizeof(deckSave))
       return;                              // short or garbled: no ack, the host gives up on this sync
-      return;                              // short/garbled image: no ack, host retries
     deckStore(slot, flags);
     char ev[16];
     snprintf(ev, sizeof(ev), "DECKOK:%u", (unsigned)slot);
@@ -876,13 +880,14 @@ class ServerCB : public NimBLEServerCallbacks {
     emojiRxCount = 0;               // discard partial image, never tear
     emojiRxReady = false;
     portEXIT_CRITICAL(&bleMux);
-    shownPasskey = 0;              // a cancelled/abandoned pairing drops its passkey
+    pendingPasskey = 0;            // a cancelled/abandoned pairing drops its passkey,
+    shownPasskey = 0;              // including one loop() has not drawn yet
     bleDropped = true;              // loop shows OFF/STALE
   }
 
   // DisplayOnly: we render the passkey, the host types it
   uint32_t onPassKeyDisplay() override {
-    if (millis() > pairableUntil && !pairingMode) { // outside boot window & not pairing: reject
+    if (elapsed(pairableUntil) && !pairingMode) { // outside boot window & not pairing: reject
       // NimBLE injects this return value as the passkey (NimBLEServer.cpp),
       // and the terminate above is async and aimed at the newest connection,
       // which need not be this peer — so never return a guessable 0 here.
@@ -1152,7 +1157,7 @@ void loop() {
     if (pairingMode) exitPairing();   // successful pairing leaves pairing mode
     else redrawState();
   }
-  if (pairingMode && millis() > pairingModeUntil) exitPairing();   // 2-minute timeout
+  if (pairingMode && elapsed(pairingModeUntil)) exitPairing();   // 2-minute timeout
 
   touchPoll();
   roulettePoll();
@@ -1161,7 +1166,7 @@ void loop() {
   if (state == ST_OFF && timeValid && !overlayActive()) clockTick();
 
   // expired toast: repaint the clock face
-  if (toastUntil && millis() > toastUntil) {
+  if (toastUntil && elapsed(toastUntil)) {
     toastUntil = 0;
     if (state == ST_OFF) redrawState();
   }
