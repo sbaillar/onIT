@@ -76,7 +76,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28 for your revision.
  */
 
-#define FW_VERSION "1.12.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.13.0"   // extracted by `make firmware`, embedded in onIT
 #define BOARD_TAG  "lcd128"
 
 #include <Arduino_GFX_Library.h>
@@ -1067,7 +1067,9 @@ void touchPoll() {
 
 // ---------------------------------------------------------------- setup/loop
 void setup() {
-  Serial.setRxBufferSize(4096);   // EMOJI payloads burst ~27 KB
+  // 38KB EMOJI:/DECKIMG: lines arrive at USB speed on a native-USB board,
+  // so give the ring room to absorb a burst while a repaint holds the loop.
+  Serial.setRxBufferSize(16384);
   Serial.begin(115200);
   ledcAttach(LCD_BL, 5000, 8);
   gfx->begin();

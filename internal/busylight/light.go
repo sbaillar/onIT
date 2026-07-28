@@ -17,6 +17,12 @@ import (
 const (
 	baud        = 115200
 	scanBackoff = 10 * time.Second // don't re-enumerate USB on every heartbeat
+
+	// pacing for long lines — see writePaced. 1KB per 8ms is ~128KB/s, far
+	// quicker than any payload needs and well inside the firmware's buffer
+	// even when a repaint stalls its loop for tens of milliseconds.
+	serialBurst    = 1024
+	serialBurstGap = 8 * time.Millisecond
 )
 
 // USB VID:PID pairs to match: Espressif native USB, WCH CH343 bridge.
@@ -406,13 +412,32 @@ func (t *serialTransport) sendLine(line string) bool {
 	if !t.ensureLocked() {
 		return false
 	}
-	if _, err := t.port.Write([]byte(line + "\n")); err != nil {
+	if err := t.writePaced([]byte(line + "\n")); err != nil {
 		t.port.Close()
 		t.port = nil
 		t.conn.Store(false)
 		return false
 	}
 	return true
+}
+
+// writePaced writes in bursts with a pause between them. "115200" is a
+// fiction on the AMOLED board: it has no UART bridge, so a write crosses USB
+// at USB speed — 38KB of EMOJI: or DECKIMG: lands in ~60ms, far faster than
+// the firmware's loop drains it, and the overflow silently truncates the
+// line. (The 1.28" board's CH343 really does run at 115200, which is slow
+// enough to keep up on its own — which is why this only ever broke on the
+// AMOLED.) Caller holds mu, so a line is still written atomically.
+func (t *serialTransport) writePaced(b []byte) error {
+	for len(b) > serialBurst {
+		if _, err := t.port.Write(b[:serialBurst]); err != nil {
+			return err
+		}
+		b = b[serialBurst:]
+		time.Sleep(serialBurstGap)
+	}
+	_, err := t.port.Write(b)
+	return err
 }
 
 // sendEmoji sends raw RGB565 pixels as the base64 EMOJI: line the serial
