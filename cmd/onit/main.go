@@ -500,7 +500,15 @@ func main() {
 			return
 		}
 		e := deck[slot]
+		// Adopt the winner as the shown state. The device keeps it on screen
+		// only until the next STATE: line, and the heartbeat sends one every
+		// 2s — STATE:off with no presence source — which wiped the winner
+		// almost as soon as the wheel stopped. "emoji" is the one state the
+		// firmware won't apply over a winner, so the spin result stays up
+		// until the next spin or a state the user picks.
+		agent.SetOverride("emoji")
 		fyne.Do(func() {
+			lastEmoji = fyne.NewStaticResource(e.Slug+".png", e.PNG()) // window face mirrors it
 			if spinRevert != nil {
 				spinRevert.Stop() // a newer winner supersedes any pending revert
 			}
