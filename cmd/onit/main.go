@@ -94,18 +94,28 @@ func main() {
 	// connect. The source reports a cheap signature (the capped known slugs)
 	// so an unchanged deck skips rendering; the render closure materializes
 	// one deck that both the sync and the roulette winner lookup consume.
-	// currentDeck resolves the deck the device holds. Every site that needs it
-	// — the sync source, the spin animation, the winner lookup — goes through
-	// here, so the animation can't cycle a different deck than the winner is
-	// resolved against.
-	currentDeck := func() []emoji.Entry {
-		return emoji.DeckEntries(
+	// deviceDeck is the deck as the DEVICE holds it: the exact list recorded
+	// when we last uploaded one. Recomputing it here was wrong twice over —
+	// DeckImages drops entries whose artwork won't render, so every slot
+	// after one shifts (the app named a neighbouring skin tone), and the
+	// ordering is by usage, which changes every time you send an emoji, so
+	// after a few sends the slot named something else entirely. The device
+	// only takes a new deck when it syncs, so the winner has to be read
+	// against what was actually sent.
+	deviceDeck := func() []emoji.Entry {
+		if synced := a.Preferences().StringList(syncedDeckKey); len(synced) > 0 {
+			return emoji.DeckEntries(synced, busylight.DeckSlots)
+		}
+		// nothing recorded yet (first run, or a deck synced by an older
+		// build): the freshly computed list is the best guess available
+		entries, _ := emoji.DeckImages(
 			topEmojiSlugs(a.Preferences().StringList(emojiUsageKey), busylight.DeckSlots),
 			busylight.DeckSlots)
+		return entries
 	}
 	agent.SetDeckSource(func() (string, func() [][]byte) {
 		slugs := topEmojiSlugs(a.Preferences().StringList(emojiUsageKey), busylight.DeckSlots)
-		known := currentDeck()
+		known := emoji.DeckEntries(slugs, busylight.DeckSlots)
 		names := make([]string, len(known))
 		for i, e := range known {
 			names[i] = e.Slug
@@ -116,7 +126,15 @@ func main() {
 		// connect) and fit the firmware's 220-byte command buffer.
 		sum := sha256.Sum256([]byte(strings.Join(names, "\n")))
 		return hex.EncodeToString(sum[:8]), func() [][]byte {
-			_, images := emoji.DeckImages(slugs, busylight.DeckSlots)
+			entries, images := emoji.DeckImages(slugs, busylight.DeckSlots)
+			// record exactly what is about to go to the device: this closure
+			// runs only when a sync is actually happening, so it is the one
+			// place that knows what the device will be holding
+			sent := make([]string, len(entries))
+			for i, e := range entries {
+				sent[i] = e.Slug
+			}
+			a.Preferences().SetStringList(syncedDeckKey, sent)
 			return images
 		}
 	})
@@ -443,7 +461,7 @@ func main() {
 	var spinGen atomic.Uint64
 	stopSpinFace := func() { spinGen.Add(1) }
 	spinFace := func() {
-		deck := currentDeck()
+		deck := deviceDeck()
 		if len(deck) == 0 {
 			return
 		}
@@ -538,7 +556,7 @@ func main() {
 		// device's deck was (entries correspond 1:1 with the synced images by
 		// construction — see emoji.DeckImages). Computed at event time rather
 		// than cached, so it survives an app restart with an unchanged deck.
-		deck := currentDeck()
+		deck := deviceDeck()
 		if slot < 0 || slot >= len(deck) {
 			return
 		}

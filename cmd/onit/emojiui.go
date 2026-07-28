@@ -35,6 +35,10 @@ const (
 	customFgKey      = "customFg"
 	messageColorsKey = "messageColors"
 	emojiUsageKey    = "emojiUsage"
+	// syncedDeckKey records the slugs last uploaded to the device, in slot
+	// order, so a roulette winner can be read against what the device holds
+	// rather than a list recomputed since
+	syncedDeckKey = "syncedDeck"
 )
 
 // pushHistory prepends text to the sent-message history: newest first,

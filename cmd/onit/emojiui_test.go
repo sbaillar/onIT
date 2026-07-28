@@ -3,6 +3,9 @@ package main
 import (
 	"slices"
 	"testing"
+
+	"onit/internal/busylight"
+	"onit/internal/emoji"
 )
 
 func TestPushHistory(t *testing.T) {
@@ -135,5 +138,27 @@ func TestRemoveMessage(t *testing.T) {
 	_, _, removed2 := removeMessage(history, pinned, removed, cannedTexts[0])
 	if len(removed2) != len(removed) {
 		t.Fatalf("double remove grew the list: %q", removed2)
+	}
+}
+
+// The roulette winner is read against the deck the device holds, so the list
+// recorded at sync time must be exactly what DeckImages produced — entries
+// that failed to render are dropped from the upload, and every slot after one
+// shifts if the two lists disagree.
+func TestDeckImagesEntriesMatchImages(t *testing.T) {
+	slugs := topEmojiSlugs(nil, busylight.DeckSlots) // the built-in default deck
+	entries, images := emoji.DeckImages(slugs, busylight.DeckSlots)
+	if len(entries) != len(images) {
+		t.Fatalf("%d entries but %d images: slot N would name the wrong emoji",
+			len(entries), len(images))
+	}
+	if len(entries) == 0 {
+		t.Fatal("no deck entries rendered")
+	}
+	// and each entry must actually be renderable, since that is the filter
+	for i, e := range entries {
+		if _, err := e.RGB565(); err != nil {
+			t.Errorf("entry %d (%s) is in the deck but does not render: %v", i, e.Slug, err)
+		}
 	}
 }
