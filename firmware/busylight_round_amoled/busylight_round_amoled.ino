@@ -51,6 +51,10 @@
  *             screen + full-screen passkey and exits on success, a 2-minute
  *             timeout, or another 10 s hold. Pairing attempts outside these are
  *             rejected (disconnected).
+ * Buttons  : BOOT spins the emoji roulette. The power key steps the screen
+ *             brightness 100 -> 75 -> 50 -> 25 -> 100 and remembers it; it is
+ *             read from the AXP2101 PMU over I2C rather than as a pin, and a
+ *             long press still powers the board down in the PMU's hardware.
  * Standalone: with no live host (the OFF/STALE condition) the panel shows an
  *             analog clock. Time comes from the host: a TIME:<epoch> line
  *             (UTC seconds) on every connect, displayed local through the
@@ -83,7 +87,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75 for your revision.
  */
 
-#define FW_VERSION "1.7.2"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.8.0"   // extracted by `make firmware`, embedded in onIT
 #define BOARD_TAG  "amoled175"
 
 #include <Arduino_GFX_Library.h>
@@ -91,6 +95,8 @@
 #include <Wire.h>
 #include <NimBLEDevice.h>
 #include <TouchDrv.hpp>     // SensorLib: CST9217 over I2C
+#define XPOWERS_CHIP_AXP2101
+#include <XPowersLib.h>     // AXP2101 PMU: the power key is read over I2C
 #include <esp_mac.h>
 #include <LittleFS.h>
 #include <Preferences.h>
@@ -115,6 +121,12 @@
 #define TP_SCL    14
 #define TP_INT    11
 #define TP_RST    40
+
+// Buttons. BOOT is an ordinary input once the chip is running; the other key
+// goes to the AXP2101 power-management chip and is read over I2C, not as a
+// pin (Waveshare's own examples do the same).
+#define BTN_BOOT   0          // GPIO0, the BOOT button
+#define BTN_HOLD_MS 600UL     // press longer than this counts as a hold
 
 #define SCREEN_W  466
 #define CENTER    233
@@ -180,6 +192,9 @@ Arduino_Canvas *gfx = new Arduino_Canvas(
 
 TouchDrvCST92xx touch;
 bool touchOk = false;
+
+XPowersAXP2101 pmu;
+bool pmuOk = false;      // false when the chip isn't there: the key just does nothing
 
 enum State { ST_OFF, ST_AVAILABLE, ST_MEETING, ST_SHARING, ST_FLASHING, ST_CUSTOM, ST_EMOJI,
              ST_ROULETTE_SPIN, ST_ROULETTE_WINNER };
@@ -252,8 +267,27 @@ uint8_t rouletteWinner = 0, rouletteIdx = 0;
 // with it, so nothing is drawn without being shown.
 inline void present() { gfx->flush(); }
 
+// Screens ask for a brightness; dimLevel scales all of them, so the button
+// dims the device without every renderer having to know about it.
+uint8_t dimLevel = 100;   // 100 / 75 / 50 / 25, cycled by the power key
+uint8_t askedPct = 100;   // what the current screen asked for
+
 void brightness(uint8_t pct) {         // 0-100 (a panel command, not a canvas one)
-  panel->setBrightness((uint32_t)pct * 255 / 100);
+  askedPct = pct;
+  panel->setBrightness((uint32_t)pct * dimLevel * 255 / 10000);
+}
+
+// cycleDim steps 100 -> 75 -> 50 -> 25 -> 100 and applies it at once, without
+// a repaint: brightness is a panel command, so the current screen just dims.
+void cycleDim() {
+  switch (dimLevel) {
+    case 100: dimLevel = 75; break;
+    case 75:  dimLevel = 50; break;
+    case 50:  dimLevel = 25; break;
+    default:  dimLevel = 100; break;
+  }
+  prefs.putUChar("dim", dimLevel);
+  brightness(askedPct);
 }
 
 // elapsed reports whether a millis() deadline has passed, correctly across
@@ -1100,6 +1134,32 @@ void touchPoll() {
   }
 }
 
+// ---------------------------------------------------------------- buttons
+// BOOT spins the wheel. Polled with the same 50ms cadence as touch; only the
+// press edge counts, and a hold is ignored so a stuck button can't spin
+// repeatedly.
+void bootButtonPoll() {
+  static unsigned long lastPoll = 0;
+  static bool wasDown = false;
+  if (millis() - lastPoll < 50) return;
+  lastPoll = millis();
+  bool down = digitalRead(BTN_BOOT) == LOW;
+  if (down && !wasDown) startSpin();
+  wasDown = down;
+}
+
+// The power key dims the screen. The AXP2101 latches a short-press interrupt;
+// reading it clears it. A long press is left to the PMU, which powers the
+// board down in hardware.
+void powerKeyPoll() {
+  static unsigned long lastPoll = 0;
+  if (!pmuOk || millis() - lastPoll < 100) return;
+  lastPoll = millis();
+  pmu.getIrqStatus();
+  if (pmu.isPekeyShortPressIrq()) cycleDim();
+  pmu.clearIrqStatus();
+}
+
 // ---------------------------------------------------------------- setup/loop
 void setup() {
   // 38KB EMOJI:/DECKIMG: lines arrive at USB speed on a native-USB board,
@@ -1123,6 +1183,20 @@ void setup() {
   prefs.begin("onit", false);
   tzStr = prefs.getString("tz", "");
   deckSig = prefs.getString("decksig", "");
+  dimLevel = prefs.getUChar("dim", 100);
+  if (dimLevel != 25 && dimLevel != 50 && dimLevel != 75) dimLevel = 100;
+
+  pinMode(BTN_BOOT, INPUT_PULLUP);
+  // The PMU shares the touch I2C bus. If it isn't there, carry on without it
+  // rather than failing to boot — the key simply stays inert.
+  pmuOk = pmu.begin(Wire, AXP2101_SLAVE_ADDRESS, TP_SDA, TP_SCL);
+  if (pmuOk) {
+    pmu.disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
+    pmu.clearIrqStatus();
+    pmu.enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ);
+  } else {
+    Serial.print("PMU not found; the power key will do nothing\n");
+  }
   if (tzStr.length()) { setenv("TZ", tzStr.c_str(), 1); tzset(); }
   LittleFS.begin(true);           // mounts the default "spiffs" data partition
   LittleFS.mkdir("/deck");
@@ -1202,6 +1276,8 @@ void loop() {
   if (pairingMode && elapsed(pairingModeUntil)) exitPairing();   // 2-minute timeout
 
   touchPoll();
+  bootButtonPoll();
+  powerKeyPoll();
   roulettePoll();
 
   // 1 Hz clock hands while standalone (paused under a toast or the pairing screen)

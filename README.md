@@ -79,6 +79,17 @@ winner stays until you spin again or the computer reconnects. "Spin the
 wheel" in the tray does the same while connected. Pairing mode: hold the face for 10
 seconds (a progress ring fills), then pair from the tray within 2 minutes.
 
+### Buttons (1.75" AMOLED)
+
+| Button | Press |
+|---|---|
+| BOOT | spin the emoji roulette |
+| Power key | dim the screen: 100% → 75% → 50% → 25% → 100%, remembered across reboots |
+
+The power key is read from the board's AXP2101 power-management chip rather
+than as a GPIO; holding it still powers the device down, which the PMU does
+in hardware. The 1.28" board has no equivalent user buttons.
+
 ## States
 
 | State | Trigger (Auto) | Display |
@@ -134,7 +145,7 @@ for firmware work, macOS for the GUI/pkg targets.
 # one-time firmware toolchain setup
 arduino-cli core install esp32:esp32
 arduino-cli lib install "GFX Library for Arduino" "Adafruit GFX Library" \
-  "NimBLE-Arduino" "SensorLib"   # last two for the 1.75" AMOLED sketch
+  "NimBLE-Arduino" "SensorLib" "XPowersLib"   # last three for the 1.75" AMOLED sketch
 
 make test       # go vet + unit tests
 make build      # dist/onIT (GUI) + dist/onitctl (headless CLI)
