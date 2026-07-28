@@ -167,6 +167,10 @@ func (a *Agent) SetDeckSource(f DeckSource) {
 // (see Light.SetOnRoulette).
 func (a *Agent) SetOnRoulette(f func(slot int)) { a.light.SetOnRoulette(f) }
 
+// SetOnFrame registers a callback for each frame of a spin
+// (see Light.SetOnFrame).
+func (a *Agent) SetOnFrame(f func(slot int)) { a.light.SetOnFrame(f) }
+
 // Spin starts the emoji roulette on the device (see Light.Spin).
 func (a *Agent) Spin() error { return a.light.Spin() }
 

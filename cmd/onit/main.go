@@ -12,7 +12,6 @@ import (
 	"runtime"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -31,6 +30,10 @@ import (
 )
 
 const autoLabel = "Auto (Teams)"
+
+// windowTitle names the main window. AppKit finds it by title to restore its
+// position, so the two must agree.
+const windowTitle = "onIT"
 
 // remoteAddr is where onIT listens for presence pushed by `onitctl -forward`.
 const remoteAddr = ":8125"
@@ -139,7 +142,7 @@ func main() {
 		}
 	})
 
-	w := a.NewWindow("onIT")
+	w := a.NewWindow(windowTitle)
 	w.SetFixedSize(true)
 	w.SetCloseIntercept(w.Hide)
 
@@ -156,7 +159,18 @@ func main() {
 	busyBar := widget.NewProgressBarInfinite()
 	busyBar.Stop()
 	busyBar.Hide()
-	header := container.NewVBox(container.NewCenter(face.root), container.NewCenter(capLbl), busyBar)
+	var spinBtn *spinButton
+	spinBtn = newSpinButton(func() {
+		go func() {
+			if err := agent.Spin(); err != nil {
+				log.Printf("spin failed: %v", err)
+			}
+		}()
+	})
+	// the spin control sits beside the device face, above the status line
+	header := container.NewVBox(
+		container.NewCenter(container.NewHBox(face.root, container.NewCenter(spinBtn))),
+		container.NewCenter(capLbl), busyBar)
 
 	// one choice list drives both the window buttons and the tray menu
 	type choice struct{ label, state string }
@@ -452,51 +466,27 @@ func main() {
 	pairItem := fyne.NewMenuItem("Pair busylight...", func() { w.Show(); showBLEPair(a, agent, w) })
 	lostItem := fyne.NewMenuItem("Pairing lost - re-pair...", func() { w.Show(); showBLEPair(a, agent, w) })
 	forgetItem := fyne.NewMenuItem("Forget device", func() { agent.ForgetBLE() })
-	// The window face mirrors the device during a spin: same 5s ease-out
-	// through the same deck, so both screens are doing the same thing. The
-	// winner event ends it early and settles on the real result.
-	// A generation counter, not a channel: winners can arrive twice over (the
-	// device emits an event on both links, and each dispatch is its own
-	// goroutine), and two closers of one channel panic.
-	var spinGen atomic.Uint64
-	stopSpinFace := func() { spinGen.Add(1) }
-	spinFace := func() {
+	// The device drives the spin and reports each frame; the window follows,
+	// so both show the same emoji at the same moment. Mirroring it with a
+	// local timer of the same shape was never actually in step.
+	agent.SetOnFrame(func(slot int) {
 		deck := deviceDeck()
-		if len(deck) == 0 {
+		if slot < 0 || slot >= len(deck) {
 			return
 		}
-		mine := spinGen.Add(1)
-		agent.SetOverride("emoji") // so the face shows emoji, not the off screen
-		go func() {
-			deadline := time.Now().Add(spinDuration)
-			for i := 0; time.Now().Before(deadline); i++ {
-				time.Sleep(spinFrameGap(i))
-				if spinGen.Load() != mine {
-					return // superseded by the winner, or by a newer spin
-				}
-				res := emojiRes(deck[i%len(deck)])
-				fyne.Do(func() {
-					if spinGen.Load() != mine {
-						return // the winner landed while this frame was queued
-					}
-					lastEmoji = res
-					face.Set("emoji", res) // face only: update() rebuilds the tray
-				})
-			}
-		}()
-	}
+		res := emojiRes(deck[slot])
+		fyne.Do(func() {
+			lastEmoji = res
+			face.Set("emoji", res)
+			spinBtn.advance()
+		})
+	})
 
 	spinItem := fyne.NewMenuItem("Spin the wheel", func() {
 		go func() {
-			// Only mirror a spin the device actually started: spinFace takes
-			// the "emoji" override, and with no spin there is no winner event
-			// to hand it back, which would strand presence behind a blank
-			// emoji screen.
 			if err := agent.Spin(); err != nil {
 				log.Printf("spin failed: %v", err)
-				return
 			}
-			fyne.Do(spinFace)
 		}()
 	})
 	syncItem := fyne.NewMenuItem("syncing emojis...", nil)
@@ -567,8 +557,7 @@ func main() {
 		// almost as soon as the wheel stopped. "emoji" is the one state the
 		// firmware won't apply over a winner, so the spin result stays up
 		// until the next spin or a state the user picks.
-		stopSpinFace() // the real winner supersedes the mirrored animation
-		agent.SetOverride("emoji")
+		agent.SetOverride("emoji") // hold the winner against the heartbeat
 		fyne.Do(func() {
 			lastEmoji = emojiRes(e) // window face mirrors it
 			if spinRevert != nil {
@@ -813,6 +802,38 @@ func main() {
 
 	w.Resize(fyne.NewSize(260, 0)) // height from content; keep it compact
 
+	// Remember where the window was left. Fyne has no position API, so this
+	// goes through AppKit (see winpos_darwin.m) and is macOS-only. The
+	// restore has to wait for the window to exist, and the save runs on hide
+	// as well as quit, since a menu-bar app is usually closed rather than
+	// quit.
+	restoreWindowPos := func() {
+		x, y := prefs.Float(winPosXKey), prefs.Float(winPosYKey)
+		if x == 0 && y == 0 {
+			return // nothing saved yet
+		}
+		setWindowOrigin(windowTitle, x, y)
+	}
+	// Poll rather than saving on close or quit: a menu-bar app is as likely
+	// to be force-quit or killed as closed cleanly, and either would lose the
+	// position. An AppKit frame read is cheap, and the write only happens
+	// when it has actually moved.
+	go func() {
+		var lastX, lastY float64
+		for {
+			time.Sleep(2 * time.Second)
+			x, y, ok := windowOrigin(windowTitle)
+			if !ok || (x == lastX && y == lastY) {
+				continue
+			}
+			lastX, lastY = x, y
+			fyne.Do(func() {
+				prefs.SetFloat(winPosXKey, x)
+				prefs.SetFloat(winPosYKey, y)
+			})
+		}
+	}()
+
 	// first launch from the installed location: enable the login item
 	exe, _ := os.Executable()
 	if !a.Preferences().Bool("autostartConfigured") && autostartAutoEnable(exe) {
@@ -826,6 +847,11 @@ func main() {
 
 	go agent.Run()
 
+	// the window has no NSWindow until it is shown, so restore just after
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		fyne.Do(restoreWindowPos)
+	}()
 	if *hidden {
 		a.Run()
 	} else {

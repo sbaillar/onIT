@@ -49,6 +49,7 @@ type Light struct {
 	bleBoard    atomic.Value     // string: board from the BLE device's banner
 	onTouch     atomic.Value     // func(string): TOUCH: event callback
 	onRoulette  atomic.Value     // func(int): ROULETTE: winner-slot callback
+	onFrame     atomic.Value     // func(int): FRAME: per-step slot during a spin
 	deckSource  atomic.Value     // func() (sig string, render func() [][]byte)
 	deckSyncing atomic.Bool      // a deck upload is in flight (see SyncDeck)
 	flashing    atomic.Bool      // esptool owns the port; no writes (see sendLine)
@@ -70,6 +71,11 @@ func (l *Light) SetOnTouch(f func(kind string)) { l.onTouch.Store(f) }
 // SetOnRoulette registers a callback for ROULETTE:<slot> events — the deck
 // slot the emoji roulette settled on (see Spin).
 func (l *Light) SetOnRoulette(f func(slot int)) { l.onRoulette.Store(f) }
+
+// SetOnFrame registers a callback for FRAME:<slot> events, one per step of a
+// spin. The device drives the animation and the host follows it, so both
+// screens show the same emoji at the same moment.
+func (l *Light) SetOnFrame(f func(slot int)) { l.onFrame.Store(f) }
 
 // DeckSource reports a cheap signature of the current roulette deck plus a
 // closure that renders it. Named so that changing the shape breaks callers at
@@ -162,6 +168,14 @@ func (l *Light) handleDeviceEvent(line string) {
 	// A roulette winner arrives over whichever link the device is on; this
 	// used to be dispatched from the BLE path alone, so a spin over USB
 	// never reached the app.
+	if s, ok := strings.CutPrefix(line, "FRAME:"); ok {
+		if slot, err := strconv.Atoi(s); err == nil {
+			if f, _ := l.onFrame.Load().(func(int)); f != nil {
+				go f(slot)
+			}
+		}
+		return
+	}
 	if s, ok := strings.CutPrefix(line, "ROULETTE:"); ok {
 		if slot, err := strconv.Atoi(s); err == nil {
 			if f, _ := l.onRoulette.Load().(func(int)); f != nil {

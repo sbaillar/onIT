@@ -24,6 +24,8 @@
  * Serial out: VERSION:x.y.z:amoled175  (at boot and on VERSION query)
  *             TOUCH:TAP / TOUCH:LONG   (screen tapped / long-pressed;
  *             the host decides what they mean)
+ *             FRAME:<slot>             (each roulette frame, so the host can
+ *             follow the spin exactly instead of animating its own)
  *             ROULETTE:<slot>          (the roulette wheel settled on <slot>)
  *             DECKOK:<slot> / DECKSIG:<sig>  (deck upload ack / deck query reply)
  *
@@ -87,7 +89,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75 for your revision.
  */
 
-#define FW_VERSION "1.8.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.9.0"   // extracted by `make firmware`, embedded in onIT
 #define BOARD_TAG  "amoled175"
 
 #include <Arduino_GFX_Library.h>
@@ -697,6 +699,11 @@ void roulettePoll() {
   }
   rouletteIdx = (rouletteIdx + 1) % deckN;
   if (deckLoad(deckSlots[rouletteIdx])) { emojiValid = true; redrawState(); }
+  // report every frame so the host shows the same emoji at the same moment
+  // rather than running its own animation and drifting out of step
+  char fr[16];
+  snprintf(fr, sizeof(fr), "FRAME:%u", (unsigned)deckSlots[rouletteIdx]);
+  emitEvent(fr);
   rouletteIval *= 1.09f;         // ease out: ~60ms frames -> ~0.5s over 5s
   rouletteNext = now + (unsigned long)rouletteIval;
 }

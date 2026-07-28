@@ -69,7 +69,7 @@ func TestParseVersion(t *testing.T) {
 		in         string
 		ver, board string
 	}{
-		{"1.10.0", "1.10.0", ""}, // no board tag: firmware too old to say
+		{"1.10.0", "1.10.0", ""},              // no board tag: firmware too old to say
 		{"1.11.0:lcd128", "1.11.0", "lcd128"}, // a board we no longer support
 		{"1.0.0:amoled175", "1.0.0", "amoled175"},
 	}
