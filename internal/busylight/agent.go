@@ -27,7 +27,7 @@ type Status struct {
 	Override       string // "" = auto (follow Teams)
 	Shown          string // state currently sent to the device
 	DeviceFW       string // firmware version the device reported; "" = unknown
-	Board          string // board type the device reported ("lcd128", "amoled175", "" = unknown)
+	Board          string // board type the device reported ("amoled175", "" = unknown)
 	Transport      string // live link: "ble", "usb", "" while disconnected
 	BLEBonded      bool   // a BLE busylight is paired
 	PairingLost    bool   // bonded device refused the encrypted link; re-pair

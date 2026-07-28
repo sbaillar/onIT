@@ -32,7 +32,7 @@ func wordmark() fyne.CanvasObject {
 func showAbout(a fyne.App) {
 	w := a.NewWindow("About onIT")
 
-	version := widget.NewLabel("Version " + appVersion + " (firmware " + firmware.Version + " embedded)")
+	version := widget.NewLabel("Version " + appVersion + " (firmware " + firmware.AmoledVersion + " embedded)")
 	version.Alignment = fyne.TextAlignCenter
 	desc := widget.NewLabel("A physical Teams busylight: shows your presence on a\nround LCD on your desk, in sync with Microsoft Teams -\nor set it yourself.")
 	desc.Alignment = fyne.TextAlignCenter

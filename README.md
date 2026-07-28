@@ -11,20 +11,16 @@ Microsoft Graph (presence) ──► onIT app ──USB serial or BLE──► r
 
 ## Hardware
 
-Both boards are supported; onIT senses which one is connected and flashes
-the matching firmware automatically.
-
 | Part | Notes |
 |---|---|
-| [Waveshare ESP32-S3-Touch-LCD-1.28](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28) | 1.28" round IPS LCD (GC9A01, 240×240), CST816S touch, CH343P USB-UART. **Bluetooth (fw 1.11.0+) or USB.** |
-| [Waveshare ESP32-S3-Touch-AMOLED-1.75](https://www.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75) | 1.75" round AMOLED (466×466, QSPI), CST9217 touch, native USB. **Bluetooth (preferred) or USB** — runs wireless from any USB-C power source. |
+| [Waveshare ESP32-S3-Touch-AMOLED-1.75](https://www.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75) | 1.75" round AMOLED (466×466, QSPI), CST9217 touch, native USB, AXP2101 power management. **Bluetooth (preferred) or USB** — runs wireless from any USB-C power source. |
 | USB-C cable | Data-capable (powers the device, carries the serial link, and flashes firmware) |
 
-Both boards have the same capabilities — Bluetooth, the standalone clock,
-and the emoji roulette. That's a project rule: device features ship on both
-boards in the same release, or the release notes say why not.
+This is the only supported board. The 1.28" LCD board (ESP32-S3-Touch-LCD-1.28)
+was supported up to 1.18.0 and dropped after it; that firmware is still in the
+history at tag `v1.18.0` if you need it.
 
-No soldering, no wiring — flash either board over its USB cable. It then
+No soldering, no wiring — flash the board over its USB cable. It then
 works untethered: tray → **Pair busylight…**, type the 6-digit
 passkey the device shows on its screen into the macOS pairing dialog, and
 onIT drives it over an encrypted, bonded BLE link (falling back to USB
@@ -78,7 +74,7 @@ also has:
 Manual states override Teams until you click **Auto (Teams)**; the app
 returns to Auto on restart.
 
-## Standalone mode (both boards)
+## Standalone mode
 
 With no computer connected, the board shows a themed **analog clock**
 instead of going dark. onIT sets it whenever they're connected — your
@@ -93,7 +89,7 @@ winner stays until you spin again or the computer reconnects. "Spin the
 wheel" in the tray does the same while connected. Pairing mode: hold the face for 10
 seconds (a progress ring fills), then pair from the tray within 2 minutes.
 
-### Buttons (1.75" AMOLED)
+### Buttons
 
 | Button | Press |
 |---|---|
@@ -102,7 +98,7 @@ seconds (a progress ring fills), then pair from the tray within 2 minutes.
 
 The power key is read from the board's AXP2101 power-management chip rather
 than as a GPIO; holding it still powers the device down, which the PMU does
-in hardware. The 1.28" board has no equivalent user buttons.
+in hardware.
 
 ## States
 
@@ -203,13 +199,12 @@ Or copy the identity between machines by exporting it from Keychain Access.
 uses a real Apple identity if you have one.
 
 `onitctl -ports` lists serial ports if the device isn't detected
-(the app matches USB IDs 303A:1001 and 1A86:55D3 — add yours in
+(the app matches USB ID 303A:1001 — add yours in
 `internal/busylight/light.go`).
 
 ## Repo layout
 
-- `firmware/busylight_round/` — 1.28" LCD sketch (Arduino_GFX, NimBLE GATT server, board: ESP32S3 Dev Module)
-- `firmware/busylight_round_amoled/` — 1.75" AMOLED sketch (QSPI panel, NimBLE GATT server)
+- `firmware/busylight_round_amoled/` — the device sketch (QSPI AMOLED panel, NimBLE GATT server, AXP2101 power key)
 - `internal/busylight/` — agent core: presence sources, serial + BLE transports, esptool flashing
 - `internal/busylight/deckserial.go` — roulette deck upload over USB (BLE has its own path in `ble.go`)
 - `cmd/onit/logview.go` — the log viewer behind **Show log…**
@@ -228,7 +223,7 @@ uses a real Apple identity if you have one.
 | host → device | `DECKSIG:<sig>` / `DECKSIG` | set / query the deck the device holds, so an unchanged deck isn't re-sent |
 | host → device | `SPIN` | start the emoji roulette |
 | host → device | `EMOJI:<base64>` | show a 120×120 RGB565 image now |
-| device → host | `VERSION:x.y.z[:board]` | at boot and on query; board tag `lcd128`/`amoled175` (absent on legacy 1.28" firmware) |
+| device → host | `VERSION:x.y.z:amoled175` | at boot and on query; the board tag is what the flash path senses |
 | device → host | `TOUCH:TAP` / `TOUCH:LONG` | screen tapped or long-pressed; the host decides what it means |
 | device → host | `ROULETTE:<slot>` | the wheel settled on a deck slot |
 | device → host | `DECKOK:<slot>` / `DECKSIG:<sig>` | deck upload ack / reply to a `DECKSIG` query |

@@ -23,5 +23,5 @@ func setupLogging() {
 		return
 	}
 	log.SetOutput(io.MultiWriter(os.Stderr, f))
-	log.Printf("onIT starting (embedded firmware %s, log %s)", firmware.Version, p)
+	log.Printf("onIT starting (embedded firmware %s, log %s)", firmware.AmoledVersion, p)
 }

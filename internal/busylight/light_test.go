@@ -69,8 +69,8 @@ func TestParseVersion(t *testing.T) {
 		in         string
 		ver, board string
 	}{
-		{"1.10.0", "1.10.0", "lcd128"}, // legacy 2-field banner = 1.28"
-		{"1.11.0:lcd128", "1.11.0", "lcd128"},
+		{"1.10.0", "1.10.0", ""}, // no board tag: firmware too old to say
+		{"1.11.0:lcd128", "1.11.0", "lcd128"}, // a board we no longer support
 		{"1.0.0:amoled175", "1.0.0", "amoled175"},
 	}
 	for _, tc := range tests {
@@ -89,13 +89,14 @@ func TestVersionPerTransport(t *testing.T) {
 		t.Errorf("Board before any banner = %q, want empty", got)
 	}
 
-	// legacy 2-field banner: version only, board defaults to the 1.28"
+	// a banner with no board tag reports no board, so the flash path refuses
+	// rather than guessing at hardware this build no longer supports
 	l.serial.handleLine("VERSION:1.10.0")
 	if got := l.Version(); got != "1.10.0" {
 		t.Errorf("Version = %q, want 1.10.0", got)
 	}
-	if got := l.Board(); got != "lcd128" {
-		t.Errorf("Board = %q, want lcd128", got)
+	if got := l.Board(); got != "" {
+		t.Errorf("Board = %q, want empty", got)
 	}
 
 	// a BLE banner is the BLE device's own state: while BLE is down the

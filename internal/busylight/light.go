@@ -25,10 +25,9 @@ const (
 	serialBurstGap = 8 * time.Millisecond
 )
 
-// USB VID:PID pairs to match: Espressif native USB, WCH CH343 bridge.
+// USB VID:PID pairs to match: the AMOLED board's native Espressif USB.
 var usbIDs = map[[2]string]bool{
 	{"303A", "1001"}: true,
-	{"1A86", "55D3"}: true,
 }
 
 // transport is the link to the device (serial today, BLE later).
@@ -120,13 +119,13 @@ func (l *Light) transports() []transport {
 }
 
 // parseVersion splits a VERSION banner body into version and board type:
-// "x.y.z:amoled175" is the 1.75" AMOLED board, "x.y.z:lcd128" the 1.28" LCD,
-// and a missing third field is legacy 1.28" firmware.
+// "x.y.z:amoled175" is the 1.75" AMOLED board. A banner with no board tag is
+// firmware too old to carry one, which is never the supported board.
 func parseVersion(v string) (version, board string) {
 	if ver, b, ok := strings.Cut(v, ":"); ok {
 		return ver, b
 	}
-	return v, "lcd128"
+	return v, ""
 }
 
 // handleBLEEvent parses a device line from the BLE transport: the VERSION
@@ -328,7 +327,7 @@ func (l *Light) Version() string {
 }
 
 // Board returns the board type of the same device Version reports
-// ("lcd128", "amoled175", or "" before any VERSION banner).
+// ("amoled175", or "" before any VERSION banner).
 func (l *Light) Board() string {
 	if ble := l.bleTr(); ble != nil && ble.connected() {
 		b, _ := l.bleBoard.Load().(string)

@@ -14,10 +14,9 @@ import (
 	"onit/internal/firmware"
 )
 
-// portBoard returns the board type implied by the port's USB bridge chip:
-// the CH343 bridge is the 1.28" LCD board, native ESP32-S3 USB the 1.75"
-// AMOLED. "" when the port is unknown. This is the fallback sense for a
-// blank/unresponsive board that never answers VERSION.
+// portBoard returns the board type implied by the port's USB IDs: native
+// ESP32-S3 USB is the 1.75" AMOLED. "" when the port is unknown. This is the
+// fallback sense for a blank/unresponsive board that never answers VERSION.
 func portBoard(name string) string {
 	ports, err := enumerator.GetDetailedPortsList()
 	if err != nil {
@@ -27,10 +26,7 @@ func portBoard(name string) string {
 		if p.Name != name || !p.IsUSB {
 			continue
 		}
-		switch strings.ToUpper(p.VID) + ":" + strings.ToUpper(p.PID) {
-		case "1A86:55D3":
-			return "lcd128"
-		case "303A:1001":
+		if strings.ToUpper(p.VID)+":"+strings.ToUpper(p.PID) == "303A:1001" {
 			return "amoled175"
 		}
 	}

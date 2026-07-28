@@ -14,11 +14,6 @@ APPLDFLAGS := -trimpath -ldflags "-s -w -X main.appVersion=$(VERSION)"
 ESPTOOL_VERSION := v5.3.1
 ESPTOOL := build/tools/esptool
 ESPTOOL_WIN := build/tools/esptool.exe
-# LCD board: stock 4MB scheme is enough (no Wi-Fi stack; the sketch uses 57%
-# of the 1.25MB app slot and the deck needs 576KB of the 1.44MB spiffs
-# partition), so it runs on 4MB and 16MB revisions alike. PSRAM=enabled maps
-# the embedded QSPI PSRAM for the emoji deck cache.
-FQBN    := esp32:esp32:esp32s3:PSRAM=enabled
 # AMOLED board: 16MB flash + sketch-local partitions.csv. The app fits the
 # stock 4MB scheme now that the Wi-Fi stack is gone, but field devices are
 # already laid out this way and restacking would wipe their deck partition.
@@ -28,7 +23,6 @@ FQBN    := esp32:esp32:esp32s3:PSRAM=enabled
 # device is mute over USB — it flashes fine and then never answers VERSION.
 # The 1.28" board keeps the default: its CH343 bridge sits on UART0.
 FQBN_AMOLED := esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=custom,PSRAM=opi,CDCOnBoot=cdc
-SKETCH  := firmware/busylight_round
 SKETCH_AMOLED := firmware/busylight_round_amoled
 MINGW   := x86_64-w64-mingw32-gcc
 
@@ -51,12 +45,6 @@ test:
 TRUNC := python3 -c "import sys;p=sys.argv[1];d=open(p,'rb').read().rstrip(b'\xff');open(p,'wb').write(d)"
 
 firmware:
-	arduino-cli compile --fqbn $(FQBN) --export-binaries $(SKETCH)
-	cp $(SKETCH)/build/esp32.esp32.esp32s3/busylight_round.ino.merged.bin \
-		internal/firmware/firmware.bin
-	$(TRUNC) internal/firmware/firmware.bin
-	sed -n 's/^#define FW_VERSION "\(.*\)".*/\1/p' \
-		$(SKETCH)/busylight_round.ino > internal/firmware/version.txt
 	arduino-cli compile --fqbn $(FQBN_AMOLED) --export-binaries $(SKETCH_AMOLED)
 	cp $(SKETCH_AMOLED)/build/esp32.esp32.esp32s3/busylight_round_amoled.ino.merged.bin \
 		internal/firmware/firmware_amoled.bin

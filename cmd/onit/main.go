@@ -352,13 +352,13 @@ func main() {
 	fwLbl := widget.NewLabel("Firmware: ...")
 	fwLbl.Importance = widget.LowImportance
 	fwBtn := widget.NewButton("Update firmware", nil)
-	// targetFW is the bundled firmware version for the sensed board; an
-	// unknown board (no banner yet) is assumed to be the 1.28" LCD.
+	// targetFW is the bundled firmware version for the sensed board. A board
+	// that hasn't answered VERSION yet falls back to the only image we carry.
 	targetFW := func(board string) string {
 		if _, v, err := firmware.ForBoard(board); err == nil {
 			return v
 		}
-		return firmware.Version
+		return firmware.AmoledVersion
 	}
 
 	var update func()
