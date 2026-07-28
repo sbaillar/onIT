@@ -268,8 +268,19 @@ func (a *Agent) Run() {
 			a.mu.Lock()
 			state := a.effectiveLocked()
 			a.mu.Unlock()
+			// The heartbeat is the device's liveness signal: it blanks to its
+			// standalone clock after 5s of silence. Anything that stalls this
+			// loop for that long is a visible fault, so say where the time
+			// went rather than leaving a hole in the log.
+			t0 := time.Now()
 			a.light.Send(state)
+			sent := time.Since(t0)
 			a.notify()
+			if total := time.Since(t0); total > time.Second {
+				log.Printf("heartbeat stalled %v (send %v, notify %v)",
+					total.Round(time.Millisecond), sent.Round(time.Millisecond),
+					(total - sent).Round(time.Millisecond))
+			}
 		}
 	}()
 	go func() { // keep the standalone clock set

@@ -38,17 +38,18 @@ func bleUUID(s string) bluetooth.UUID {
 // bleTransport drives the bonded AMOLED board over Bluetooth LE.
 // Reconnects lazily on send, like serialTransport.
 type bleTransport struct {
-	mu        sync.Mutex
-	deviceID  string // OS peripheral identifier from pairing
-	dev       *bluetooth.Device
-	cmd       bluetooth.DeviceCharacteristic
-	emoji     bluetooth.DeviceCharacteristic
-	nextScan  time.Time
-	conn      atomic.Bool
-	lost      atomic.Bool       // bond refused; stop retrying until re-pair
-	onEvent   func(line string) // device lines (VERSION:, TOUCH:, ROULETTE:) from Events
-	onConnect func()            // post-connect pushes (timezone, deck sync); may be nil
-	deckAck   chan byte         // DECKOK:<slot> ack after the device persists a deck image
+	mu         sync.Mutex
+	deviceID   string // OS peripheral identifier from pairing
+	dev        *bluetooth.Device
+	cmd        bluetooth.DeviceCharacteristic
+	emoji      bluetooth.DeviceCharacteristic
+	nextScan   time.Time
+	conn       atomic.Bool
+	connecting atomic.Bool       // a background reconnect is in flight
+	lost       atomic.Bool       // bond refused; stop retrying until re-pair
+	onEvent    func(line string) // device lines (VERSION:, TOUCH:, ROULETTE:) from Events
+	onConnect  func()            // post-connect pushes (timezone, deck sync); may be nil
+	deckAck    chan byte         // DECKOK:<slot> ack after the device persists a deck image
 }
 
 var _ bleLink = (*bleTransport)(nil)
@@ -118,7 +119,12 @@ func bleChars(dev bluetooth.Device) (cmd, emoji, events bluetooth.DeviceCharacte
 	return
 }
 
-// ensureLocked connects to the bonded device. Caller holds mu.
+// ensureLocked reports whether the link is live, and starts a reconnect in
+// the background when it isn't. It must never connect inline: this runs on
+// the heartbeat goroutine, and a connect blocks for its full timeout — which
+// is longer than the device's 5s liveness watchdog, so an unreachable bonded
+// device made the light drop to its clock and back every few seconds.
+// Caller holds mu.
 func (t *bleTransport) ensureLocked() bool {
 	if t.dev != nil {
 		return true
@@ -127,15 +133,27 @@ func (t *bleTransport) ensureLocked() bool {
 		return false
 	}
 	t.nextScan = time.Now().Add(scanBackoff)
+	if t.connecting.CompareAndSwap(false, true) {
+		go func() {
+			defer t.connecting.Store(false)
+			t.reconnect()
+		}()
+	}
+	return false // this send goes over USB; BLE takes over once it is up
+}
+
+// reconnect establishes the bonded link. Runs on its own goroutine, so it may
+// block; takes mu only to publish the result.
+func (t *bleTransport) reconnect() {
 	dev, err := bleConnect(t.deviceID)
 	if err != nil {
-		return false
+		return
 	}
 	cmd, emoji, events, err := bleChars(dev)
 	if err != nil {
 		log.Printf("BLE discovery failed: %v", err)
 		dev.Disconnect()
-		return false
+		return
 	}
 	// The encrypted read verifies the bond. If the board was reflashed or the
 	// OS bond deleted it fails: surface "pairing lost" and stop retrying —
@@ -144,7 +162,7 @@ func (t *bleTransport) ensureLocked() bool {
 		log.Printf("BLE bond check failed: %v — re-pair from the tray", err)
 		t.lost.Store(true)
 		dev.Disconnect()
-		return false
+		return
 	}
 	if err := events.EnableNotifications(func(buf []byte) {
 		line := strings.TrimSpace(string(buf))
@@ -162,20 +180,22 @@ func (t *bleTransport) ensureLocked() bool {
 	}); err != nil {
 		log.Printf("BLE notifications failed: %v", err)
 		dev.Disconnect()
-		return false
+		return
 	}
+	t.mu.Lock()
 	t.dev = &dev
 	t.cmd = cmd
 	t.emoji = emoji
 	t.conn.Store(true)
+	watched := t.dev
+	t.mu.Unlock()
 	log.Printf("BLE connected: %s", t.deviceID)
-	go t.watch(t.dev)
+	go t.watch(watched)
 	// Ask for the version banner; the reply arrives as an Events notification.
 	go t.sendLine("VERSION")
 	if t.onConnect != nil {
 		go t.onConnect()
 	}
-	return true
 }
 
 // watch polls the connection state so an idle disconnect (out of range,

@@ -479,11 +479,25 @@ func (t *serialTransport) drop(port serial.Port) {
 
 // sendLine writes a protocol line, connecting first if needed.
 func (t *serialTransport) sendLine(line string) bool {
+	queued := time.Now()
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	waited := time.Since(queued)
+	opened := time.Now()
 	if !t.ensureLocked() {
 		return false
 	}
+	// separate the three things that can stall a write — waiting behind
+	// another writer, opening the port, and the write itself — because they
+	// point at very different causes
+	defer func(started time.Time) {
+		if d := time.Since(queued); d > time.Second {
+			log.Printf("serial write took %v (queued %v, open %v, write %v) for %.24s",
+				d.Round(time.Millisecond), waited.Round(time.Millisecond),
+				started.Sub(opened).Round(time.Millisecond),
+				time.Since(started).Round(time.Millisecond), line)
+		}
+	}(time.Now())
 	if err := t.writePaced([]byte(line + "\n")); err != nil {
 		t.port.Close()
 		t.port = nil
