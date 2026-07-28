@@ -75,7 +75,12 @@ var slugIndex = sync.OnceValue(func() map[string]Entry {
 })
 
 // DeckEntries resolves slugs to their emoji entries for the roulette deck,
-// dropping unknown slugs and capping at n.
+// dropping unknown slugs and any without artwork, and capping at n.
+//
+// Dropping the artwork-less ones here rather than only in DeckImages is what
+// keeps a slot number meaning the same emoji on both sides: the device
+// numbers slots by the images it was sent, so any entry counted here but not
+// uploaded would shift every slot after it.
 func DeckEntries(slugs []string, n int) []Entry {
 	index := slugIndex()
 	var out []Entry
@@ -83,17 +88,19 @@ func DeckEntries(slugs []string, n int) []Entry {
 		if len(out) == n {
 			break
 		}
-		if e, ok := index[s]; ok {
-			out = append(out, e)
+		e, ok := index[s]
+		if !ok || e.PNG() == nil {
+			continue
 		}
+		out = append(out, e)
 	}
 	return out
 }
 
 // DeckImages renders slugs into raw RGB565 images for the roulette deck,
-// dropping unknown slugs (via DeckEntries) and any that fail to render,
-// capped at n. The returned entries correspond 1:1 with the images by
-// construction, so the roulette winner slot indexes either identically.
+// capped at n. DeckEntries has already dropped anything without artwork, so
+// the returned entries match it as well as the images — a slot number means
+// the same emoji whichever list you index.
 func DeckImages(slugs []string, n int) ([]Entry, [][]byte) {
 	var entries []Entry
 	var images [][]byte

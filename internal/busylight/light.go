@@ -53,6 +53,7 @@ type Light struct {
 	deckSource  atomic.Value     // func() (sig string, render func() [][]byte)
 	deckSyncing atomic.Bool      // a deck upload is in flight (see SyncDeck)
 	flashing    atomic.Bool      // esptool owns the port; no writes (see sendLine)
+	clockTheme  atomic.Int32     // standalone clock face pushed on connect
 
 	// replies to serial deck traffic, routed out of the reader goroutine.
 	// Buffered by one and written non-blocking: a reply nobody is waiting

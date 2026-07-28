@@ -53,6 +53,8 @@
  *             screen + full-screen passkey and exits on success, a 2-minute
  *             timeout, or another 10 s hold. Pairing attempts outside these are
  *             rejected (disconnected).
+ * Clock    : CLOCK:<0|1> picks the face — 0 dark with ticks, 1 white with
+ *             numerals at 12/3/6/9 and a red second hand. Kept in NVS.
  * Buttons  : BOOT spins the emoji roulette. The power key steps the screen
  *             brightness 100 -> 75 -> 50 -> 25 -> 100 and remembers it; it is
  *             read from the AXP2101 PMU over I2C rather than as a pin, and a
@@ -89,7 +91,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75 for your revision.
  */
 
-#define FW_VERSION "1.9.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.10.0"   // extracted by `make firmware`, embedded in onIT
 #define BOARD_TAG  "amoled175"
 
 #include <Arduino_GFX_Library.h>
@@ -167,6 +169,7 @@
 #define C_GRAY_RING   0x4208  // #404040
 #define C_GRAY_TEXT   0x5ACB  // #585858
 #define C_YELLOW      0xEE09  // #E8C24A
+#define C_RED_SECOND  0xF800  // pure red, the white theme's second hand
 
 // Presenting pulse: 8-step ring color LUT, white -> #787CB8 -> white (sine)
 const uint16_t PULSE_LUT[8] = {
@@ -256,6 +259,18 @@ String deckSig;
 // set by a TIME: push from the host; false = clock face without hands
 bool timeValid = false;
 
+// clock face: 0 = dark (ticks, pale hands), 1 = white (numbers at 12/3/6/9,
+// red second hand). Set by CLOCK:<n> from the host and kept in NVS.
+uint8_t clockTheme = 0;
+
+// the theme's colours, so every clock routine agrees without repeating the
+// conditional at each use
+uint16_t clockBg()   { return clockTheme ? C_WHITE : C_BG_IDLE; }
+uint16_t clockHour() { return clockTheme ? C_BLACK : C_WHITE; }
+uint16_t clockMin()  { return clockTheme ? C_BLACK : C_LAVENDER; }
+uint16_t clockSec()  { return clockTheme ? C_RED_SECOND : C_GREEN; }
+uint16_t clockHub()  { return clockTheme ? C_BLACK : C_LAVENDER; }
+
 // ---- standalone clock / roulette / toast
 float prevHA, prevMA, prevSA;               // last-drawn hand angles (erase)
 bool prevHandsValid = false;
@@ -310,6 +325,19 @@ void textCenteredS(const char *s, int16_t cy, const GFXfont *font, uint8_t scale
   int16_t x1, y1; uint16_t tw, th;
   gfx->getTextBounds(s, 0, 0, &x1, &y1, &tw, &th);
   gfx->setCursor(CENTER - tw / 2 - x1, cy - th / 2 - y1);
+  gfx->print(s);
+  gfx->setTextSize(1);
+}
+
+// textCenteredAt centres text on an arbitrary point, not just the panel's
+// vertical axis — the 3 and 9 numerals sit left and right of centre.
+void textCenteredAt(int16_t cx, int16_t cy, const char *s, const GFXfont *font, uint16_t color) {
+  gfx->setFont(font);
+  gfx->setTextSize(2);
+  gfx->setTextColor(color);
+  int16_t x1, y1; uint16_t tw, th;
+  gfx->getTextBounds(s, 0, 0, &x1, &y1, &tw, &th);
+  gfx->setCursor(cx - tw / 2 - x1, cy - th / 2 - y1);
   gfx->print(s);
   gfx->setTextSize(1);
 }
@@ -537,21 +565,52 @@ void drawClockHands() {
   float ma = (t.tm_min + t.tm_sec / 60.0f) * 6 * DEG_TO_RAD;
   float ha = (t.tm_hour % 12 + t.tm_min / 60.0f) * 30 * DEG_TO_RAD;
   if (prevHandsValid) {
-    handLine(prevSA, 30, 176, 2, C_BG_IDLE);
-    handLine(prevMA, 24, 150, 4, C_BG_IDLE);
-    handLine(prevHA, 24, 104, 6, C_BG_IDLE);
+    handLine(prevSA, 30, 176, 2, clockBg());
+    handLine(prevMA, 24, 150, 4, clockBg());
+    handLine(prevHA, 24, 104, 6, clockBg());
   }
-  handLine(ha, 24, 104, 6, C_WHITE);
-  handLine(ma, 24, 150, 4, C_LAVENDER);
-  handLine(sa, 30, 176, 2, C_GREEN);
-  gfx->fillCircle(CENTER, CENTER, 12, C_LAVENDER);       // center hub
-  gfx->fillCircle(CENTER, CENTER, 5, C_BG_IDLE);
+  handLine(ha, 24, 104, 6, clockHour());
+  handLine(ma, 24, 150, 4, clockMin());
+  handLine(sa, 30, 176, 2, clockSec());
+  gfx->fillCircle(CENTER, CENTER, 12, clockHub());       // center hub
+  gfx->fillCircle(CENTER, CENTER, 5, clockBg());
   prevHA = ha; prevMA = ma; prevSA = sa;
   prevHandsValid = true;
   present();
 }
 
+// the white face: numbers at 12/3/6/9 and small marks for the other hours
+void drawClockWhite() {
+  gfx->fillScreen(C_WHITE);
+  for (int i = 0; i < 12; i++) {
+    if (i % 3 == 0) continue;                            // those get numerals
+    float a = i * 30 * DEG_TO_RAD;
+    float dx = sinf(a), dy = -cosf(a);
+    float px = cosf(a), py = sinf(a);
+    for (int o = -1; o <= 1; o++)
+      gfx->drawLine(CENTER + px * o + dx * 196, CENTER + py * o + dy * 196,
+                    CENTER + px * o + dx * 212, CENTER + py * o + dy * 212, C_BLACK);
+  }
+  textCentered("12", 62, &FreeSansBold18pt7b, C_BLACK);
+  textCentered("6", 404, &FreeSansBold18pt7b, C_BLACK);
+  // 3 and 9 sit on the centre line, offset in from the rim by their own width
+  textCenteredAt(404, CENTER, "3", &FreeSansBold18pt7b, C_BLACK);
+  textCenteredAt(62, CENTER, "9", &FreeSansBold18pt7b, C_BLACK);
+}
+
 void drawClock() {
+  if (clockTheme) {
+    drawClockWhite();
+    prevHandsValid = false;
+    if (timeValid) {
+      drawClockHands();
+      brightness(35);
+      return;
+    }
+    brightness(10);
+    present();
+    return;
+  }
   gfx->fillScreen(C_BG_IDLE);
   for (int i = 0; i < 60; i++) {                         // minute ticks
     float a = i * 6 * DEG_TO_RAD;
@@ -593,7 +652,7 @@ void clockTick() {
 
 // brief message over the clock face; face repainted when it expires
 void drawToast(const char *msg) {
-  gfx->fillCircle(CENTER, CENTER, 178, C_BG_IDLE);       // wipes hands too (sec hand reaches r=176)
+  gfx->fillCircle(CENTER, CENTER, 178, clockBg());       // wipes hands too (sec hand reaches r=176)
   textCentered(msg, 233, &FreeSansBold9pt7b, C_YELLOW);
   brightness(35);
   prevHandsValid = false;
@@ -902,6 +961,15 @@ void handleLine(const String &line) {
     emitEvent(ev);
     return;
   }
+  if (line.startsWith("CLOCK:")) {          // 0 = dark face, 1 = white face
+    uint8_t t = line.substring(6).toInt() ? 1 : 0;
+    if (t != clockTheme) {
+      clockTheme = t;
+      prefs.putUChar("clock", clockTheme);
+      if (state == ST_OFF && !overlayActive()) redrawState();
+    }
+    return;
+  }
   if (line.startsWith("DECKSIG:")) {       // host records what this deck is
     deckSig = line.substring(8);
     prefs.putString("decksig", deckSig);
@@ -1191,6 +1259,7 @@ void setup() {
   tzStr = prefs.getString("tz", "");
   deckSig = prefs.getString("decksig", "");
   dimLevel = prefs.getUChar("dim", 100);
+  clockTheme = prefs.getUChar("clock", 0) ? 1 : 0;
   if (dimLevel != 25 && dimLevel != 50 && dimLevel != 75) dimLevel = 100;
 
   pinMode(BTN_BOOT, INPUT_PULLUP);

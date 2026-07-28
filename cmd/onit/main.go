@@ -109,12 +109,10 @@ func main() {
 		if synced := a.Preferences().StringList(syncedDeckKey); len(synced) > 0 {
 			return emoji.DeckEntries(synced, busylight.DeckSlots)
 		}
-		// nothing recorded yet (first run, or a deck synced by an older
-		// build): the freshly computed list is the best guess available
-		entries, _ := emoji.DeckImages(
+		// nothing recorded yet, i.e. no connect since this build started
+		return emoji.DeckEntries(
 			topEmojiSlugs(a.Preferences().StringList(emojiUsageKey), busylight.DeckSlots),
 			busylight.DeckSlots)
-		return entries
 	}
 	agent.SetDeckSource(func() (string, func() [][]byte) {
 		slugs := topEmojiSlugs(a.Preferences().StringList(emojiUsageKey), busylight.DeckSlots)
@@ -127,17 +125,17 @@ func main() {
 		// echoes it back, so it has to survive a C string (a NUL separator
 		// truncated it to the first slug, and the deck re-uploaded on every
 		// connect) and fit the firmware's 220-byte command buffer.
+		// Record the list this signature stands for, here rather than at
+		// upload: the device reports the signature it holds, so whenever that
+		// matches, this is what its slots contain — including when the sync
+		// is skipped because nothing changed, which is most of the time and
+		// was previously left unrecorded, leaving winner lookups to guess.
+		if !slices.Equal(a.Preferences().StringList(syncedDeckKey), names) {
+			a.Preferences().SetStringList(syncedDeckKey, names)
+		}
 		sum := sha256.Sum256([]byte(strings.Join(names, "\n")))
 		return hex.EncodeToString(sum[:8]), func() [][]byte {
-			entries, images := emoji.DeckImages(slugs, busylight.DeckSlots)
-			// record exactly what is about to go to the device: this closure
-			// runs only when a sync is actually happening, so it is the one
-			// place that knows what the device will be holding
-			sent := make([]string, len(entries))
-			for i, e := range entries {
-				sent[i] = e.Slug
-			}
-			a.Preferences().SetStringList(syncedDeckKey, sent)
+			_, images := emoji.DeckImages(slugs, busylight.DeckSlots)
 			return images
 		}
 	})
@@ -405,6 +403,25 @@ func main() {
 	})
 	verboseCheck.SetChecked(prefs.Bool(verboseKey))
 	busylight.Verbose.Store(prefs.Bool(verboseKey))
+
+	// Clock face. The device keeps its own copy in NVS; this pushes changes
+	// and PushClock re-sends it on every connect, so a reflashed device
+	// comes back to the face you picked.
+	clockCheck := widget.NewCheck("White clock face (numbers, red second hand)", func(on bool) {
+		prefs.SetBool(whiteClockKey, on)
+		clockThemeShown = 0
+		if on {
+			clockThemeShown = 1
+		}
+		agent.SetClockTheme(clockThemeShown)
+		update()
+	})
+	clockThemeShown = 0
+	if prefs.Bool(whiteClockKey) {
+		clockThemeShown = 1
+	}
+	clockCheck.SetChecked(clockThemeShown == 1)
+	agent.SetClockTheme(clockThemeShown)
 
 	loginCheck := widget.NewCheck("Start at login", nil)
 	loginCheck.SetChecked(autostartEnabled())
@@ -764,7 +781,7 @@ func main() {
 	// Built once and hidden on close so update() keeps its widget pointers.
 	settingsWin := a.NewWindow("onIT Settings")
 	settingsWin.SetContent(container.NewVBox(
-		fwLbl, fwBtn, graphSetupBtn, remoteCheck, micCheck, betaCheck, verboseCheck, loginCheck))
+		fwLbl, fwBtn, graphSetupBtn, remoteCheck, micCheck, clockCheck, betaCheck, verboseCheck, loginCheck))
 	settingsWin.SetCloseIntercept(settingsWin.Hide)
 	settingsWin.Resize(fyne.NewSize(300, 0))
 	showSettings = func() { settingsWin.Show(); settingsWin.RequestFocus() }
@@ -844,6 +861,19 @@ func main() {
 		}
 		a.Preferences().SetBool("autostartConfigured", true)
 	}
+
+	// keep the window's clock running while the device is showing one, so the
+	// two faces stay identical rather than the window freezing at a time
+	go func() {
+		for {
+			time.Sleep(time.Second)
+			fyne.Do(func() {
+				if agent.Status().Shown == "off" {
+					face.Set("off", lastEmoji)
+				}
+			})
+		}
+	}()
 
 	go agent.Run()
 

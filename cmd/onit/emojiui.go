@@ -41,6 +41,8 @@ const (
 	// where the main window was last left (macOS only; see winpos_darwin.m)
 	winPosXKey = "winPosX"
 	winPosYKey = "winPosY"
+	// white clock face instead of the dark one
+	whiteClockKey = "whiteClock"
 )
 
 // pushHistory prepends text to the sent-message history: newest first,

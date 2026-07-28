@@ -220,12 +220,23 @@ func (l *Light) PushClock() error {
 	for _, line := range []string{
 		"TZ:" + posixTZ(now.Location(), now.Year()),
 		"TIME:" + strconv.FormatInt(now.Unix(), 10),
+		// the face too: a device that rebooted has forgotten nothing (it is
+		// in NVS), but a device flashed or swapped has, and this is the only
+		// moment we know to tell it
+		"CLOCK:" + strconv.FormatInt(int64(l.clockTheme.Load()), 10),
 	} {
 		if !l.sendLine(line) {
 			return errors.New("busylight not connected")
 		}
 	}
 	return nil
+}
+
+// SetClockTheme picks the standalone clock face (0 dark, 1 white) and tells
+// the device now if it is listening. The device keeps it in NVS.
+func (l *Light) SetClockTheme(theme int) {
+	l.clockTheme.Store(int32(theme))
+	l.sendLine("CLOCK:" + strconv.Itoa(theme))
 }
 
 // Spin starts the emoji roulette on the device; the winner arrives as a

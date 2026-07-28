@@ -4,6 +4,7 @@ import (
 	"image/color"
 	"math"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -24,7 +25,14 @@ var (
 	faceBgIdle   = color.NRGBA{0x10, 0x10, 0x18, 0xFF} // C_BG_IDLE
 	faceLavender = color.NRGBA{0xD8, 0xD8, 0xF0, 0xFF} // C_LAVENDER
 	faceGrayText = color.NRGBA{0x58, 0x58, 0x58, 0xFF} // C_GRAY_TEXT
+	faceGrayRing = color.NRGBA{0x40, 0x40, 0x40, 0xFF} // C_GRAY_RING
+	faceGreen    = color.NRGBA{0x90, 0xC4, 0x50, 0xFF} // C_GREEN
+	faceRedSec   = color.NRGBA{0xFF, 0x00, 0x00, 0xFF} // the white face's second hand
 )
+
+// clockTheme picks the face the device is drawing: 0 dark with ticks,
+// 1 white with numerals. Mirrored here so the window shows the same clock.
+var clockThemeShown = 0
 
 // Icons traced from the firmware's iconMic/iconShare (24x24 grid, scale 2).
 var micIcon = fyne.NewStaticResource("mic.svg", []byte(
@@ -56,6 +64,15 @@ type deviceFace struct {
 	share *canvas.Image
 	emoji *canvas.Image
 	lines [5]*canvas.Text // lines[0]/[1] double as the state captions
+
+	// the standalone clock, mirroring the device's own face
+	ticks  []*canvas.Line
+	nums   [4]*canvas.Text // 12/3/6/9 on the white face
+	hourH  *canvas.Line
+	minH   *canvas.Line
+	secH   *canvas.Line
+	hub    *canvas.Circle
+	hubDot *canvas.Circle
 }
 
 func newDeviceFace() *deviceFace {
@@ -66,6 +83,21 @@ func newDeviceFace() *deviceFace {
 		mic:   canvas.NewImageFromResource(micIcon),
 		share: canvas.NewImageFromResource(shareIcon),
 		emoji: &canvas.Image{FillMode: canvas.ImageFillContain},
+		hourH: canvas.NewLine(faceWhite),
+		minH:  canvas.NewLine(faceLavender),
+		secH:  canvas.NewLine(faceGreen),
+		hub:   canvas.NewCircle(faceLavender),
+	}
+	f.hubDot = canvas.NewCircle(faceBgIdle)
+	f.hourH.StrokeWidth, f.minH.StrokeWidth, f.secH.StrokeWidth = fs(7), fs(5), fs(3)
+	for i := 0; i < 60; i++ {
+		l := canvas.NewLine(faceGrayRing)
+		l.StrokeWidth = fs(1)
+		f.ticks = append(f.ticks, l)
+	}
+	for i := range f.nums {
+		f.nums[i] = canvas.NewText("", faceBlack)
+		f.nums[i].TextStyle = fyne.TextStyle{Bold: true}
 	}
 	for i := range f.lines {
 		f.lines[i] = canvas.NewText("", faceWhite)
@@ -83,8 +115,22 @@ func newDeviceFace() *deviceFace {
 	place(f.mic, 120, 80, fs(48))
 	place(f.share, 120, 74, fs(46))
 
+	place(f.hub, 120, 120, 2*fs(6))
+	place(f.hubDot, 120, 120, 2*fs(3))
+
 	inner := container.NewWithoutLayout(f.disc, f.emoji, f.dash,
 		f.dot, f.mic, f.share)
+	for _, t := range f.ticks {
+		inner.Add(t)
+	}
+	for _, n := range f.nums {
+		inner.Add(n)
+	}
+	inner.Add(f.hourH)
+	inner.Add(f.minH)
+	inner.Add(f.secH)
+	inner.Add(f.hub)
+	inner.Add(f.hubDot)
 	for _, l := range f.lines {
 		inner.Add(l)
 	}
@@ -112,8 +158,15 @@ func (f *deviceFace) setText(t *canvas.Text, s string, size float32, c color.Col
 // Set renders the screen the firmware draws for shown; emojiRes is the
 // emoji or text image last sent to the device (the wire payload has no name).
 func (f *deviceFace) Set(shown string, emojiRes fyne.Resource) {
-	for _, o := range []fyne.CanvasObject{f.dash, f.dot, f.mic, f.share, f.emoji} {
+	for _, o := range []fyne.CanvasObject{f.dash, f.dot, f.mic, f.share, f.emoji,
+		f.hourH, f.minH, f.secH, f.hub, f.hubDot} {
 		o.Hide()
+	}
+	for _, t := range f.ticks {
+		t.Hide()
+	}
+	for _, n := range f.nums {
+		n.Hide()
 	}
 	for _, l := range f.lines {
 		l.Hide()
@@ -145,11 +198,90 @@ func (f *deviceFace) Set(shown string, emojiRes fyne.Resource) {
 		} else {
 			f.setText(f.lines[0], "?", 19, faceGrayText, 130)
 		}
-	default: // off: black, dotted ring
-		f.fill(faceBlack, faceBlack, 0)
-		f.dash.Show()
-		f.setText(f.lines[0], "- -", 13, faceGrayText, 124)
+	default: // off: the standalone clock, the same face the device draws
+		f.setClock(time.Now())
 	}
+}
+
+// setClock draws the device's standalone clock. Both faces are mirrored so
+// the window shows what the device shows rather than a placeholder.
+func (f *deviceFace) setClock(now time.Time) {
+	white := clockThemeShown == 1
+	bg := faceBgIdle
+	if white {
+		bg = faceWhite
+	}
+	f.fill(bg, bg, 0)
+
+	// hour marks: numerals at 12/3/6/9 on the white face, ticks on the dark
+	if white {
+		for i, label := range [4]string{"12", "3", "6", "9"} {
+			cx, cy := clockPoint(float64(i)*90, 84)
+			n := f.nums[i]
+			n.Text, n.TextSize, n.Color = label, 15, faceBlack
+			m := fyne.MeasureText(n.Text, n.TextSize, n.TextStyle)
+			n.Resize(m)
+			n.Move(fyne.NewPos(cx-m.Width/2, cy-m.Height/2))
+			n.Show()
+			n.Refresh()
+		}
+		for i, t := range f.ticks {
+			if i%5 != 0 || i%15 == 0 {
+				continue // only the eight hours without a numeral
+			}
+			f.setLine(t, float64(i)*6, 101, 109, faceBlack, fs(2))
+		}
+	} else {
+		for i, t := range f.ticks {
+			if i%5 == 0 {
+				f.setLine(t, float64(i)*6, 99, 110, faceLavender, fs(2))
+			} else {
+				f.setLine(t, float64(i)*6, 105, 110, faceGrayRing, fs(1))
+			}
+		}
+	}
+
+	hourCol, minCol, secCol, hubCol := faceWhite, faceLavender, faceGreen, faceLavender
+	if white {
+		hourCol, minCol, secCol, hubCol = faceBlack, faceBlack, faceRedSec, faceBlack
+	}
+	h, m, sec := now.Hour()%12, now.Minute(), now.Second()
+	f.setHand(f.hourH, float64(h)*30+float64(m)*0.5, 54, hourCol)
+	f.setHand(f.minH, float64(m)*6+float64(sec)*0.1, 77, minCol)
+	f.setHand(f.secH, float64(sec)*6, 91, secCol)
+	f.hub.FillColor, f.hubDot.FillColor = hubCol, bg
+	f.hub.Show()
+	f.hubDot.Show()
+	f.hub.Refresh()
+	f.hubDot.Refresh()
+}
+
+// clockPoint is the screen position of a point at angle deg (0 = 12 o'clock,
+// clockwise) and radius r, in the firmware's 240px coordinates.
+func clockPoint(deg, r float64) (x, y float32) {
+	rad := deg * math.Pi / 180
+	return fs(120) + fs(float32(math.Sin(rad)*r)), fs(120) - fs(float32(math.Cos(rad)*r))
+}
+
+// setLine places a radial line between two radii, for the hour marks.
+func (f *deviceFace) setLine(l *canvas.Line, deg, r1, r2 float64, c color.Color, w float32) {
+	x1, y1 := clockPoint(deg, r1)
+	x2, y2 := clockPoint(deg, r2)
+	l.Position1, l.Position2 = fyne.NewPos(x1, y1), fyne.NewPos(x2, y2)
+	l.StrokeColor, l.StrokeWidth = c, w
+	l.Show()
+	l.Refresh()
+}
+
+// setHand draws a hand from the hub out to length (firmware coordinates),
+// with the same short tail behind the pivot the device draws.
+func (f *deviceFace) setHand(l *canvas.Line, deg, length float64, c color.Color) {
+	x1, y1 := clockPoint(deg+180, 12)
+	x2, y2 := clockPoint(deg, length)
+	l.Position1, l.Position2 = fyne.NewPos(x1, y1), fyne.NewPos(x2, y2)
+	l.StrokeColor = c
+	l.Show()
+	l.Refresh()
 }
 
 // The custom screen's usable radius in firmware coordinates (240px face,

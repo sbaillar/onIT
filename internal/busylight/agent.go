@@ -171,6 +171,9 @@ func (a *Agent) SetOnRoulette(f func(slot int)) { a.light.SetOnRoulette(f) }
 // (see Light.SetOnFrame).
 func (a *Agent) SetOnFrame(f func(slot int)) { a.light.SetOnFrame(f) }
 
+// SetClockTheme picks the standalone clock face (see Light.SetClockTheme).
+func (a *Agent) SetClockTheme(theme int) { a.light.SetClockTheme(theme) }
+
 // Spin starts the emoji roulette on the device (see Light.Spin).
 func (a *Agent) Spin() error { return a.light.Spin() }
 
