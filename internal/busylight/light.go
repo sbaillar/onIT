@@ -151,6 +151,14 @@ func (l *Light) handleDeviceEvent(line string) {
 		}
 		return
 	}
+	// The device's own boot/crash chatter — a panic prints a reset reason and
+	// a backtrace down the same serial line. Unlogged, a board stuck in a
+	// reset loop looks like nothing at all from the host: on a bridged board
+	// the port never drops, so there is no reconnect to notice either.
+	if isDeviceFault(line) {
+		log.Printf("device: %s", line)
+		return
+	}
 	// A roulette winner arrives over whichever link the device is on; this
 	// used to be dispatched from the BLE path alone, so a spin over USB
 	// never reached the app.
@@ -188,7 +196,10 @@ func (l *Light) handleDeviceEvent(line string) {
 // reader, and both of these write.
 func (l *Light) handleSerialEvent(line string) {
 	l.handleDeviceEvent(line)
-	if strings.HasPrefix(line, "VERSION:") {
+	if v, ok := strings.CutPrefix(line, "VERSION:"); ok {
+		// logged every time: one at connect is normal, one every few seconds
+		// is a device resetting in a loop, which is otherwise invisible here
+		log.Printf("device banner: %s", v)
 		go func() {
 			if err := l.PushClock(); err != nil {
 				log.Printf("clock push failed: %v", err)
@@ -196,6 +207,22 @@ func (l *Light) handleSerialEvent(line string) {
 			l.syncDeckSerial()
 		}()
 	}
+}
+
+// faultMarkers are the openings of ESP32 reset and panic output.
+var faultMarkers = []string{
+	"rst:", "Guru Meditation", "Backtrace:", "abort()", "assert failed",
+	"Panic", "CORRUPT HEAP", "Stack canary", "E (", "ets ",
+}
+
+// isDeviceFault reports whether a device line looks like a reset or crash.
+func isDeviceFault(line string) bool {
+	for _, m := range faultMarkers {
+		if strings.HasPrefix(line, m) {
+			return true
+		}
+	}
+	return false
 }
 
 func findPort() string {
