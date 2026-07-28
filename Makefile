@@ -103,7 +103,15 @@ pkg: app build
 	cp -RX $(DIST)/$(APP).app build/pkgroot/Applications/
 	cp -X $(DIST)/onitctl build/pkgroot/usr/local/bin/
 	xattr -rc build/pkgroot
+	# Pin the install location. By default the installer treats an app bundle
+	# as relocatable: if LaunchServices knows the same bundle id somewhere
+	# else, it overwrites *that* copy and /Applications stays empty. Anyone
+	# who has ever run a build from another directory hits this — it landed a
+	# release in the source tree's dist/ instead of /Applications.
+	pkgbuild --analyze --root build/pkgroot build/component.plist
+	/usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" build/component.plist
 	COPYFILE_DISABLE=1 pkgbuild --root build/pkgroot --install-location / \
+		--component-plist build/component.plist \
 		--identifier $(ID) --version $(VERSION) $(DIST)/$(APP)-$(VERSION)-macos-arm64.pkg
 
 # headless agent for Windows
