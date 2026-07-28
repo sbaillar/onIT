@@ -721,11 +721,6 @@ void togglePairing() {
   else enterPairing();
 }
 
-// restore the screen under a cancelled progress ring
-void restoreScreen() {
-  redrawState();   // handles pairing/toast/state precedence
-}
-
 // ---------------------------------------------------------------- events (serial + BLE notify)
 void emitEvent(const char *s) {
   Serial.print(s);
@@ -1051,7 +1046,7 @@ void touchPoll() {
     if (consumed) {                              // pairing toggle already handled
       // nothing
     } else if (ringDeg >= 0) {                   // ring shown then released early: cancel
-      restoreScreen();
+      redrawState();
     } else if (pairingMode) {                    // taps do nothing while pairing
       // nothing
     } else if (held >= HOLD_LONG_MS) {

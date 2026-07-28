@@ -208,19 +208,6 @@ func (l *Light) PairingLost() bool {
 	return ble != nil && ble.pairingLost()
 }
 
-// bleSend writes a protocol line to the bonded device over BLE only (never
-// USB). Errors when no BLE device is bonded or the write fails.
-func (l *Light) bleSend(line string) error {
-	ble := l.bleTr()
-	if ble == nil {
-		return errors.New("no BLE busylight bonded")
-	}
-	if !ble.sendLine(line) {
-		return errors.New("BLE write failed")
-	}
-	return nil
-}
-
 // PushClock sets the device's standalone clock: the Mac's timezone as a POSIX
 // TZ string (e.g. EST5EDT,M3.2.0,M11.1.0) so it tracks DST on its own, then
 // the current UTC epoch. This is the only way the device learns the time —
@@ -229,12 +216,14 @@ func (l *Light) bleSend(line string) error {
 // when the app quits. Order matters; TZ first means the first TIME: push
 // already renders in local time.
 func (l *Light) PushClock() error {
-	now := time.Now()
-	if !l.sendLine("TZ:" + posixTZ(now.Location(), now.Year())) {
-		return errors.New("busylight not connected")
-	}
-	if !l.sendLine("TIME:" + strconv.FormatInt(time.Now().Unix(), 10)) {
-		return errors.New("busylight not connected")
+	now := time.Now() // one reading, so the zone and the time can't straddle a DST change
+	for _, line := range []string{
+		"TZ:" + posixTZ(now.Location(), now.Year()),
+		"TIME:" + strconv.FormatInt(now.Unix(), 10),
+	} {
+		if !l.sendLine(line) {
+			return errors.New("busylight not connected")
+		}
 	}
 	return nil
 }
@@ -365,7 +354,7 @@ func (l *Light) handleBLEConnect() {
 	if err := l.PushClock(); err != nil {
 		log.Printf("BLE clock push failed: %v", err)
 	}
-	src, _ := l.deckSource.Load().(func() (string, func() [][]byte))
+	src := l.deckSrc()
 	if src == nil || l.deckSyncing.Load() {
 		return
 	}

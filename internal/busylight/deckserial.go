@@ -62,15 +62,17 @@ func (l *Light) sendDeckImageSerial(slot int, rgb565 []byte, lastOfSync bool) er
 	if !l.serial.sendLine(deckImageLine(slot, rgb565, lastOfSync)) {
 		return errors.New("deck image write failed")
 	}
-	for {
-		select {
-		case got := <-l.serialDeckAck:
-			if int(got) == slot {
-				return nil
-			} // else: a late ack for an earlier slot; keep waiting
-		case <-time.After(deckAckTimeout):
-			return fmt.Errorf("no ack for deck slot %d", slot)
+	// The channel was drained just above and holds one entry, so the only ack
+	// that can arrive is this slot's; anything else is the device disagreeing
+	// with us and is worth failing on rather than waiting out.
+	select {
+	case got := <-l.serialDeckAck:
+		if int(got) != slot {
+			return fmt.Errorf("deck slot %d acked as %d", slot, got)
 		}
+		return nil
+	case <-time.After(deckAckTimeout):
+		return fmt.Errorf("no ack for deck slot %d", slot)
 	}
 }
 
@@ -82,7 +84,7 @@ func (l *Light) syncDeckSerial() {
 	if l.bleTr() != nil { // BLE has its own incremental sync
 		return
 	}
-	src, _ := l.deckSource.Load().(func() (string, func() [][]byte))
+	src := l.deckSrc()
 	if src == nil {
 		return
 	}

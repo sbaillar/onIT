@@ -157,8 +157,8 @@ func (a *Agent) ShowEmoji(payloadB64 string) bool {
 }
 
 // SetDeckSource registers the source for the emoji roulette deck; the light
-// syncs it to the BLE device on connect (see Light.SetDeckSource).
-func (a *Agent) SetDeckSource(f func() (sig string, render func() [][]byte)) {
+// syncs it to the device on connect, over either link (see Light.SetDeckSource).
+func (a *Agent) SetDeckSource(f DeckSource) {
 	a.light.SetDeckSource(f)
 }
 
@@ -168,7 +168,6 @@ func (a *Agent) SetOnRoulette(f func(slot int)) { a.light.SetOnRoulette(f) }
 
 // Spin starts the emoji roulette on the device (see Light.Spin).
 func (a *Agent) Spin() error { return a.light.Spin() }
-
 
 // PairBLE scans for BLE busylights and pairs with the one choose accepts
 // (see Light.PairBLE). Blocks until pairing finishes or ctx is cancelled.

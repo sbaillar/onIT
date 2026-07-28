@@ -19,9 +19,10 @@ ESPTOOL_WIN := build/tools/esptool.exe
 # partition), so it runs on 4MB and 16MB revisions alike. PSRAM=enabled maps
 # the embedded QSPI PSRAM for the emoji deck cache.
 FQBN    := esp32:esp32:esp32s3:PSRAM=enabled
-# AMOLED board: 16MB flash + sketch-local partitions.csv (Wi-Fi/LittleFS need
-# more than the stock 4MB scheme's 1.25MB app slot); Octal PSRAM caches the
-# emoji deck so roulette frames never hit flash
+# AMOLED board: 16MB flash + sketch-local partitions.csv. The app fits the
+# stock 4MB scheme now that the Wi-Fi stack is gone, but field devices are
+# already laid out this way and restacking would wipe their deck partition.
+# Octal PSRAM caches the emoji deck so roulette frames never hit flash
 # CDCOnBoot=cdc is essential here and only here: this board has no USB-UART
 # bridge, so with the default (disabled) Serial goes to UART0's pins and the
 # device is mute over USB — it flashes fine and then never answers VERSION.

@@ -71,12 +71,25 @@ func (l *Light) SetOnTouch(f func(kind string)) { l.onTouch.Store(f) }
 // slot the emoji roulette settled on (see Spin).
 func (l *Light) SetOnRoulette(f func(slot int)) { l.onRoulette.Store(f) }
 
+// DeckSource reports a cheap signature of the current roulette deck plus a
+// closure that renders it. Named so that changing the shape breaks callers at
+// compile time — as an inline type it was asserted in three places, and a
+// mismatch would have silently yielded nil and stopped deck sync on both
+// transports with no error.
+type DeckSource func() (sig string, render func() [][]byte)
+
 // SetDeckSource registers the roulette-deck source: it returns a cheap
 // signature of the current deck plus a render closure. On every BLE connect
 // the signature gates whether rendering and a sync are needed (see SyncDeck
 // and handleBLEConnect).
-func (l *Light) SetDeckSource(f func() (sig string, render func() [][]byte)) {
+func (l *Light) SetDeckSource(f DeckSource) {
 	l.deckSource.Store(f)
+}
+
+// deckSrc returns the registered deck source, nil if none.
+func (l *Light) deckSrc() DeckSource {
+	f, _ := l.deckSource.Load().(DeckSource)
+	return f
 }
 
 func NewLight() *Light {
@@ -84,7 +97,7 @@ func NewLight() *Light {
 		serialDeckAck: make(chan byte, 1),
 		serialDeckSig: make(chan string, 1),
 	}
-	l.serial = newSerialTransport(l.handleDeviceEvent)
+	l.serial = newSerialTransport(l.handleSerialEvent)
 	l.usb = l.serial
 	if dev := loadBLEDevice(); dev != nil {
 		l.dev = dev
@@ -128,20 +141,6 @@ func (l *Light) handleBLEEvent(line string) {
 	l.handleDeviceEvent(line)
 }
 
-// handleRoulette dispatches a ROULETTE:<slot> winner event to the registered
-// callback.
-func (l *Light) handleRoulette(line string) {
-	if s, ok := strings.CutPrefix(line, "ROULETTE:"); ok {
-		slot, err := strconv.Atoi(s)
-		if err != nil {
-			return
-		}
-		if f, _ := l.onRoulette.Load().(func(int)); f != nil {
-			go f(slot)
-		}
-	}
-}
-
 // handleDeviceEvent dispatches a line the device sent — over either link,
 // since the serial transport and handleBLEEvent both feed it here.
 func (l *Light) handleDeviceEvent(line string) {
@@ -154,8 +153,12 @@ func (l *Light) handleDeviceEvent(line string) {
 	// A roulette winner arrives over whichever link the device is on; this
 	// used to be dispatched from the BLE path alone, so a spin over USB
 	// never reached the app.
-	if strings.HasPrefix(line, "ROULETTE:") {
-		l.handleRoulette(line)
+	if s, ok := strings.CutPrefix(line, "ROULETTE:"); ok {
+		if slot, err := strconv.Atoi(s); err == nil {
+			if f, _ := l.onRoulette.Load().(func(int)); f != nil {
+				go f(slot)
+			}
+		}
 		return
 	}
 	// deck-upload replies belong to whoever is running a serial sync
@@ -175,10 +178,15 @@ func (l *Light) handleDeviceEvent(line string) {
 		}
 		return
 	}
-	// A serial VERSION banner means the board just booted or the port just
-	// opened (opening resets it), so its clock is unset — this is the USB
-	// counterpart of handleBLEConnect. Off this goroutine: it is the reader,
-	// and both of these write.
+}
+
+// handleSerialEvent is the serial transport's event hook: shared dispatch,
+// plus the connect-time work BLE does in handleBLEConnect. A VERSION banner
+// is serial's "just connected" signal — the board either booted or was reset
+// by the port opening, so its clock is unset. Off this goroutine: it is the
+// reader, and both of these write.
+func (l *Light) handleSerialEvent(line string) {
+	l.handleDeviceEvent(line)
 	if strings.HasPrefix(line, "VERSION:") {
 		go func() {
 			if err := l.PushClock(); err != nil {

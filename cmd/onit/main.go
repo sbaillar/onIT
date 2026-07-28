@@ -92,9 +92,18 @@ func main() {
 	// connect. The source reports a cheap signature (the capped known slugs)
 	// so an unchanged deck skips rendering; the render closure materializes
 	// one deck that both the sync and the roulette winner lookup consume.
+	// currentDeck resolves the deck the device holds. Every site that needs it
+	// — the sync source, the spin animation, the winner lookup — goes through
+	// here, so the animation can't cycle a different deck than the winner is
+	// resolved against.
+	currentDeck := func() []emoji.Entry {
+		return emoji.DeckEntries(
+			topEmojiSlugs(a.Preferences().StringList(emojiUsageKey), busylight.DeckSlots),
+			busylight.DeckSlots)
+	}
 	agent.SetDeckSource(func() (string, func() [][]byte) {
 		slugs := topEmojiSlugs(a.Preferences().StringList(emojiUsageKey), busylight.DeckSlots)
-		known := emoji.DeckEntries(slugs, busylight.DeckSlots)
+		known := currentDeck()
 		sig := make([]string, len(known))
 		for i, e := range known {
 			sig[i] = e.Slug
@@ -441,40 +450,30 @@ func main() {
 	// The window face mirrors the device during a spin: same 5s ease-out
 	// through the same deck, so both screens are doing the same thing. The
 	// winner event ends it early and settles on the real result.
-	var spinCancel atomic.Value // chan struct{}, closed to stop the animation
-	stopSpinFace := func() {
-		if ch, _ := spinCancel.Load().(chan struct{}); ch != nil {
-			spinCancel.Store((chan struct{})(nil))
-			close(ch)
-		}
-	}
+	// A generation counter, not a channel: winners can arrive twice over (the
+	// device emits an event on both links, and each dispatch is its own
+	// goroutine), and two closers of one channel panic.
+	var spinGen atomic.Uint64
+	stopSpinFace := func() { spinGen.Add(1) }
 	spinFace := func() {
-		deck := emoji.DeckEntries(topEmojiSlugs(prefs.StringList(emojiUsageKey), busylight.DeckSlots), busylight.DeckSlots)
+		deck := currentDeck()
 		if len(deck) == 0 {
 			return
 		}
-		stopSpinFace()
-		ch := make(chan struct{})
-		spinCancel.Store(ch)
+		mine := spinGen.Add(1)
 		agent.SetOverride("emoji") // so the face shows emoji, not the off screen
 		go func() {
-			ival := 60 * time.Millisecond
-			for i := 0; i < 200; i++ {
-				select {
-				case <-ch:
-					return
-				case <-time.After(ival):
+			deadline := time.Now().Add(spinDuration)
+			for i := 0; time.Now().Before(deadline); i++ {
+				time.Sleep(spinFrameGap(i))
+				if spinGen.Load() != mine {
+					return // superseded by the winner, or by a newer spin
 				}
-				e := deck[i%len(deck)]
-				res := fyne.NewStaticResource(e.Slug+".png", e.PNG())
+				res := emojiRes(deck[i%len(deck)])
 				fyne.Do(func() {
 					lastEmoji = res
 					update()
 				})
-				ival = time.Duration(float64(ival) * 1.09) // matches the firmware
-				if ival > 900*time.Millisecond {
-					return // the device has settled; wait for the winner event
-				}
 			}
 		}()
 	}
@@ -538,7 +537,7 @@ func main() {
 		// device's deck was (entries correspond 1:1 with the synced images by
 		// construction — see emoji.DeckImages). Computed at event time rather
 		// than cached, so it survives an app restart with an unchanged deck.
-		deck := emoji.DeckEntries(topEmojiSlugs(a.Preferences().StringList(emojiUsageKey), busylight.DeckSlots), busylight.DeckSlots)
+		deck := currentDeck()
 		if slot < 0 || slot >= len(deck) {
 			return
 		}
@@ -552,12 +551,12 @@ func main() {
 		stopSpinFace() // the real winner supersedes the mirrored animation
 		agent.SetOverride("emoji")
 		fyne.Do(func() {
-			lastEmoji = fyne.NewStaticResource(e.Slug+".png", e.PNG()) // window face mirrors it
+			lastEmoji = emojiRes(e) // window face mirrors it
 			if spinRevert != nil {
 				spinRevert.Stop() // a newer winner supersedes any pending revert
 			}
 			spinItem.Label = "Spin the wheel - " + e.Name
-			spinItem.Icon = fyne.NewStaticResource(e.Slug+".png", e.PNG())
+			spinItem.Icon = emojiRes(e)
 			trayMenu.Refresh()
 			spinRevert = time.AfterFunc(5*time.Second, func() {
 				fyne.Do(func() {
@@ -765,7 +764,6 @@ func main() {
 	settingsBtn := widget.NewButtonWithIcon("Settings", theme.SettingsIcon(), showSettings)
 	settingsBtn.Alignment = widget.ButtonAlignLeading
 	settingsBtn.Importance = widget.LowImportance
-	settings := container.NewVBox(settingsBtn)
 	// help menu in the top-left corner (an LSUIElement app has no menu bar)
 	helpMenu := fyne.NewMenu("",
 		fyne.NewMenuItem("Check for updates...", func() { checkForUpdates(w, prefs.Bool(betaKey)) }),
@@ -787,7 +785,7 @@ func main() {
 			grid,
 			customRow,
 			widget.NewSeparator(),
-			settings,
+			settingsBtn,
 		),
 		container.NewBorder( // floats over the face's empty corners
 			container.NewHBox(helpBtn, layout.NewSpacer(),

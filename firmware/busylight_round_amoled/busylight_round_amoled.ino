@@ -84,6 +84,7 @@
  */
 
 #define FW_VERSION "1.6.0"   // extracted by `make firmware`, embedded in onIT
+#define BOARD_TAG  "amoled175"
 
 #include <Arduino_GFX_Library.h>
 #include <Adafruit_GFX.h>   // only for its Fonts/ include path
@@ -760,11 +761,6 @@ void togglePairing() {
   else enterPairing();
 }
 
-// restore the screen under a cancelled progress ring
-void restoreScreen() {
-  redrawState();   // handles pairing/toast/state precedence
-}
-
 // ---------------------------------------------------------------- events (serial + BLE notify)
 void emitEvent(const char *s) {
   Serial.print(s);
@@ -791,7 +787,7 @@ uint16_t hex565(const String &s, int off) {
 }
 
 void handleLine(const String &line) {
-  if (line == "VERSION") { emitEvent("VERSION:" FW_VERSION ":amoled175"); return; }
+  if (line == "VERSION") { emitEvent("VERSION:" FW_VERSION ":" BOARD_TAG); return; }
   if (line == "SPIN") { startSpin(); return; }
   // config lines (BLE Command characteristic; also accepted over serial)
   if (line.startsWith("TIME:")) {          // UTC epoch seconds from the host
@@ -1019,7 +1015,7 @@ void bleInit() {
       BLE_UUID_EVT,
       NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::READ_ENC | NIMBLE_PROPERTY::READ_AUTHEN |
       NIMBLE_PROPERTY::NOTIFY);
-  evtChr->setValue("VERSION:" FW_VERSION ":amoled175");  // encrypted read triggers pairing
+  evtChr->setValue("VERSION:" FW_VERSION ":" BOARD_TAG);  // encrypted read triggers pairing
   svc->start();
 
   NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
@@ -1069,7 +1065,7 @@ void touchPoll() {
     if (consumed) {                              // pairing toggle already handled
       // nothing
     } else if (ringDeg >= 0) {                   // ring shown then released early: cancel
-      restoreScreen();
+      redrawState();
     } else if (pairingMode) {                    // taps do nothing while pairing
       // nothing
     } else if (held >= HOLD_LONG_MS) {
@@ -1102,7 +1098,7 @@ void setup() {
   drawClock();
   bleInit();
   lastCmd = 0;
-  Serial.print("VERSION:" FW_VERSION ":amoled175\n");   // boot banner; host resets us on connect
+  Serial.print("VERSION:" FW_VERSION ":" BOARD_TAG "\n");   // boot banner; host resets us on connect
 }
 
 void loop() {

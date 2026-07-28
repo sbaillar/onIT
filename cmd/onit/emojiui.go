@@ -17,6 +17,7 @@ import (
 
 	"onit/internal/busylight"
 	"onit/internal/emoji"
+	"time"
 )
 
 // cannedTexts populate the message box's drop-down.
@@ -299,4 +300,29 @@ func showEmojiPicker(a fyne.App, agent *busylight.Agent, setBusy func(bool), onP
 		container.NewVBox(quickRow, search), textRow, nil, nil, scroll)))
 	w.Resize(fyne.NewSize(680, 480)) // wide: the grid scrolls to the right
 	w.Show()
+}
+
+// emojiRes wraps an emoji entry as a Fyne image resource.
+func emojiRes(e emoji.Entry) fyne.Resource {
+	return fyne.NewStaticResource(e.Slug+".png", e.PNG())
+}
+
+// The roulette curve, mirroring firmware/busylight_round*.ino (startSpin and
+// roulettePoll): frames start at 60ms and ease out by 9% each, and the device
+// settles on its winner after spinDuration regardless of where that lands. The
+// window animation follows the same numbers so both screens stop together —
+// keep these in step with the sketches.
+const (
+	spinDuration  = 5 * time.Second
+	spinFirstGap  = 60 * time.Millisecond
+	spinGapGrowth = 1.09
+)
+
+// spinFrameGap is the delay before frame i of the animation.
+func spinFrameGap(i int) time.Duration {
+	gap := float64(spinFirstGap)
+	for range i {
+		gap *= spinGapGrowth
+	}
+	return time.Duration(gap)
 }
