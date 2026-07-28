@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -437,7 +438,49 @@ func main() {
 	pairItem := fyne.NewMenuItem("Pair busylight...", func() { w.Show(); showBLEPair(a, agent, w) })
 	lostItem := fyne.NewMenuItem("Pairing lost - re-pair...", func() { w.Show(); showBLEPair(a, agent, w) })
 	forgetItem := fyne.NewMenuItem("Forget device", func() { agent.ForgetBLE() })
+	// The window face mirrors the device during a spin: same 5s ease-out
+	// through the same deck, so both screens are doing the same thing. The
+	// winner event ends it early and settles on the real result.
+	var spinCancel atomic.Value // chan struct{}, closed to stop the animation
+	stopSpinFace := func() {
+		if ch, _ := spinCancel.Load().(chan struct{}); ch != nil {
+			spinCancel.Store((chan struct{})(nil))
+			close(ch)
+		}
+	}
+	spinFace := func() {
+		deck := emoji.DeckEntries(topEmojiSlugs(prefs.StringList(emojiUsageKey), busylight.DeckSlots), busylight.DeckSlots)
+		if len(deck) == 0 {
+			return
+		}
+		stopSpinFace()
+		ch := make(chan struct{})
+		spinCancel.Store(ch)
+		agent.SetOverride("emoji") // so the face shows emoji, not the off screen
+		go func() {
+			ival := 60 * time.Millisecond
+			for i := 0; i < 200; i++ {
+				select {
+				case <-ch:
+					return
+				case <-time.After(ival):
+				}
+				e := deck[i%len(deck)]
+				res := fyne.NewStaticResource(e.Slug+".png", e.PNG())
+				fyne.Do(func() {
+					lastEmoji = res
+					update()
+				})
+				ival = time.Duration(float64(ival) * 1.09) // matches the firmware
+				if ival > 900*time.Millisecond {
+					return // the device has settled; wait for the winner event
+				}
+			}
+		}()
+	}
+
 	spinItem := fyne.NewMenuItem("Spin the wheel", func() {
+		spinFace()
 		go func() {
 			if err := agent.Spin(); err != nil {
 				log.Printf("spin failed: %v", err)
@@ -506,6 +549,7 @@ func main() {
 		// almost as soon as the wheel stopped. "emoji" is the one state the
 		// firmware won't apply over a winner, so the spin result stays up
 		// until the next spin or a state the user picks.
+		stopSpinFace() // the real winner supersedes the mirrored animation
 		agent.SetOverride("emoji")
 		fyne.Do(func() {
 			lastEmoji = fyne.NewStaticResource(e.Slug+".png", e.PNG()) // window face mirrors it

@@ -135,12 +135,12 @@ func TestLightHandleTouch(t *testing.T) {
 	l := NewLight()
 
 	// no callback registered: must not panic
-	l.handleTouch("TOUCH:TAP")
+	l.handleDeviceEvent("TOUCH:TAP")
 
 	got := make(chan string, 1)
 	l.SetOnTouch(func(kind string) { got <- kind })
 
-	l.handleTouch("TOUCH:LONG")
+	l.handleDeviceEvent("TOUCH:LONG")
 	select {
 	case kind := <-got:
 		if kind != "LONG" {
@@ -192,5 +192,25 @@ func TestPushClock(t *testing.T) {
 	l.usb = f2
 	if err := l.PushClock(); err == nil {
 		t.Error("PushClock with a dead link = nil, want an error")
+	}
+}
+
+// The winner event used to be dispatched only from the BLE path, so a spin
+// over USB never reached the app and the wheel result vanished on the next
+// heartbeat.
+func TestRouletteEventFromSerialPath(t *testing.T) {
+	l := NewLight()
+	got := make(chan int, 1)
+	l.SetOnRoulette(func(slot int) { got <- slot })
+
+	// exactly what the serial reader feeds in
+	l.serial.handleLine("ROULETTE:7")
+	select {
+	case slot := <-got:
+		if slot != 7 {
+			t.Errorf("winner slot = %d, want 7", slot)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("roulette callback never fired for a serial event")
 	}
 }

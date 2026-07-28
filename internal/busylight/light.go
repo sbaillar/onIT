@@ -84,7 +84,7 @@ func NewLight() *Light {
 		serialDeckAck: make(chan byte, 1),
 		serialDeckSig: make(chan string, 1),
 	}
-	l.serial = newSerialTransport(l.handleTouch)
+	l.serial = newSerialTransport(l.handleDeviceEvent)
 	l.usb = l.serial
 	if dev := loadBLEDevice(); dev != nil {
 		l.dev = dev
@@ -125,8 +125,7 @@ func (l *Light) handleBLEEvent(line string) {
 		l.bleVersion.Store(ver)
 		l.bleBoard.Store(board)
 	}
-	l.handleRoulette(line)
-	l.handleTouch(line)
+	l.handleDeviceEvent(line)
 }
 
 // handleRoulette dispatches a ROULETTE:<slot> winner event to the registered
@@ -143,12 +142,20 @@ func (l *Light) handleRoulette(line string) {
 	}
 }
 
-// handleTouch dispatches a TOUCH: event line to the registered callback.
-func (l *Light) handleTouch(line string) {
+// handleDeviceEvent dispatches a line the device sent — over either link,
+// since the serial transport and handleBLEEvent both feed it here.
+func (l *Light) handleDeviceEvent(line string) {
 	if kind, ok := strings.CutPrefix(line, "TOUCH:"); ok {
 		if f, _ := l.onTouch.Load().(func(string)); f != nil {
 			go f(kind)
 		}
+		return
+	}
+	// A roulette winner arrives over whichever link the device is on; this
+	// used to be dispatched from the BLE path alone, so a spin over USB
+	// never reached the app.
+	if strings.HasPrefix(line, "ROULETTE:") {
+		l.handleRoulette(line)
 		return
 	}
 	// deck-upload replies belong to whoever is running a serial sync
