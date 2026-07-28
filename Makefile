@@ -22,7 +22,11 @@ FQBN    := esp32:esp32:esp32s3:PSRAM=enabled
 # AMOLED board: 16MB flash + sketch-local partitions.csv (Wi-Fi/LittleFS need
 # more than the stock 4MB scheme's 1.25MB app slot); Octal PSRAM caches the
 # emoji deck so roulette frames never hit flash
-FQBN_AMOLED := esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=custom,PSRAM=opi
+# CDCOnBoot=cdc is essential here and only here: this board has no USB-UART
+# bridge, so with the default (disabled) Serial goes to UART0's pins and the
+# device is mute over USB — it flashes fine and then never answers VERSION.
+# The 1.28" board keeps the default: its CH343 bridge sits on UART0.
+FQBN_AMOLED := esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=custom,PSRAM=opi,CDCOnBoot=cdc
 SKETCH  := firmware/busylight_round
 SKETCH_AMOLED := firmware/busylight_round_amoled
 MINGW   := x86_64-w64-mingw32-gcc
