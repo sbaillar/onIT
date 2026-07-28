@@ -76,7 +76,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-LCD-1.28 for your revision.
  */
 
-#define FW_VERSION "1.14.1"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.14.2"   // extracted by `make firmware`, embedded in onIT
 #define BOARD_TAG  "lcd128"
 
 #include <Arduino_GFX_Library.h>
@@ -579,14 +579,16 @@ bool deckLoad(uint8_t slot) {
   return n == sizeof(emojiBuf);
 }
 
-void deckStore(uint8_t slot, uint8_t flags) {
+bool deckStore(uint8_t slot, uint8_t flags) {
   File f = LittleFS.open(deckPath(slot), "w");
+  bool ok = false;
   if (f) {
-    f.write(deckSave, sizeof(deckSave));
+    ok = f.write(deckSave, sizeof(deckSave)) == sizeof(deckSave);
     f.close();
   }
   deckCachePut(slot, deckSave);                         // keep the spin cache current
   if (flags & EMO_FLAG_DECK_LAST) deckScan();           // deck sync done: refresh the index
+  return ok;                                           // the ack must not claim an unwritten slot
 }
 
 void startSpin() {
@@ -616,6 +618,12 @@ void roulettePoll() {
     char ev[16];
     snprintf(ev, sizeof(ev), "ROULETTE:%u", rouletteWinner);
     emitEvent(ev);
+    return;
+  }
+  if (deckN == 0) {                // deck emptied under us mid-spin: `% 0`
+    state = ST_OFF;                // faults the core, so bail to the clock
+    lastStateChg = millis();
+    redrawState();
     return;
   }
   rouletteIdx = (rouletteIdx + 1) % deckN;
@@ -697,7 +705,10 @@ void drawProgressRing(unsigned long held, int &lastDeg) {
   // repaint in 6° steps (60 over the gesture, still reads as continuous):
   // a redraw costs a whole-framebuffer push on the AMOLED, and at every
   // poll that starved serial, BLE and touch for much of the hold
-  if (deg != 360 && deg - lastDeg < 6) return;
+  if (deg != 360 && deg - lastDeg < 6) {
+    if (lastDeg < 0) lastDeg = deg;   // the track is drawn; record it, or a
+    return;                           // release here reads as a long press
+  }
   if (deg == lastDeg) return;
   lastDeg = deg;
   arcClockwiseFromTop(PROG_R, PROG_R - PROG_W, deg, C_GREEN);
@@ -806,7 +817,7 @@ void handleLine(const String &line) {
     uint8_t flags = line.substring(c1 + 1, c2).toInt() ? EMO_FLAG_DECK_LAST : 0;
     if (b64decode(line, deckSave, sizeof(deckSave), c2 + 1) != (int)sizeof(deckSave))
       return;                              // short or garbled: no ack, the host gives up on this sync
-    deckStore(slot, flags);
+    if (!deckStore(slot, flags)) return;    // no ack: the host retries the sync
     char ev[16];
     snprintf(ev, sizeof(ev), "DECKOK:%u", (unsigned)slot);
     emitEvent(ev);
@@ -1130,12 +1141,15 @@ void loop() {
       lastStateChg = millis();
       redrawState();
     } else {
-      deckStore(slot, flags);
       // per-image ack: the host holds the next slot's chunks until this
-      // arrives, so a slow LittleFS write can never tear the rx buffer
-      char ev[16];
-      snprintf(ev, sizeof(ev), "DECKOK:%u", slot);
-      emitEvent(ev);
+      // arrives, so a slow LittleFS write can never tear the rx buffer.
+      // Withheld when the write failed, so the host doesn't record a slot
+      // the device hasn't got.
+      if (deckStore(slot, flags)) {
+        char ev[16];
+        snprintf(ev, sizeof(ev), "DECKOK:%u", slot);
+        emitEvent(ev);
+      }
     }
   }
 
@@ -1168,14 +1182,18 @@ void loop() {
   // expired toast: repaint the clock face
   if (toastUntil && elapsed(toastUntil)) {
     toastUntil = 0;
-    if (state == ST_OFF) redrawState();
-  }
+    redrawState();   // unconditional: redrawState no-ops under a toast, so a
+  }                  // state set during one has not been painted yet
 
   // liveness: BLE disconnect -> OFF/STALE (clock); on USB the 5s text watchdog.
   // A roulette winner persists standalone until the next spin or a host state.
   if (bleDropped) {
     bleDropped = false;
-    if (!stateSticky(state)) setState(ST_OFF);
+    if (!stateSticky(state)) {
+      state = ST_OFF;
+      lastStateChg = millis();
+      redrawState();   // not setState: the screen needs restoring even when
+    }                  // the state is unchanged (a cancelled pairing screen)
   }
   if (bleConns == 0 && state != ST_OFF && !stateSticky(state) &&
       millis() - lastCmd > 5000) setState(ST_OFF);

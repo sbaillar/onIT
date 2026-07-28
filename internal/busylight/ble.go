@@ -293,6 +293,9 @@ func (l *Light) SyncDeck(images [][]byte, sig string) error {
 		return errors.New("deck sync already in flight")
 	}
 	defer l.deckSyncing.Store(false)
+	if len(images) == 0 {
+		return nil // never announce DECK:0 — the device divides by the count
+	}
 	for i, slot := range changed {
 		if !ble.sendDeckImage(slot, images[slot], i == len(changed)-1) {
 			return errors.New("BLE deck upload failed")
