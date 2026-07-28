@@ -52,6 +52,7 @@ type Light struct {
 	onRoulette  atomic.Value     // func(int): ROULETTE: winner-slot callback
 	deckSource  atomic.Value     // func() (sig string, render func() [][]byte)
 	deckSyncing atomic.Bool      // a deck upload is in flight (see SyncDeck)
+	flashing    atomic.Bool      // esptool owns the port; no writes (see sendLine)
 
 	// replies to serial deck traffic, routed out of the reader goroutine.
 	// Buffered by one and written non-blocking: a reply nobody is waiting
@@ -239,7 +240,15 @@ func (l *Light) SendLine(line string) bool {
 }
 
 // sendLine tries each transport in policy order until one accepts the line.
+// Refuses outright while a flash is running: esptool owns the serial port
+// then, and a write here would reopen it underneath a device mid-erase. The
+// callers that predate this check it themselves; the background clock push
+// and deck sync fire off a VERSION banner, which FlashFirmware itself
+// provokes, so the guard belongs at the one place they all pass through.
 func (l *Light) sendLine(line string) bool {
+	if l.flashing.Load() {
+		return false
+	}
 	for _, t := range l.transports() {
 		if t.sendLine(line) {
 			return true

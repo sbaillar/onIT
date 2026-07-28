@@ -82,8 +82,11 @@ func (l *Light) sendDeckImageSerial(slot int, rgb565 []byte, lastOfSync bool) er
 // owns the deck for this device, when no deck source is registered, or when
 // the signatures already agree.
 func (l *Light) syncDeckSerial() {
-	if l.bleTr() != nil { // BLE has its own incremental sync
-		return
+	// Only when BLE is actually carrying the device: bleTr() is non-nil for
+	// any *bonded* device, so testing it alone skipped the USB sync entirely
+	// for anyone who had ever paired, even with the device out of range.
+	if ble := l.bleTr(); ble != nil && ble.connected() {
+		return // BLE has its own incremental sync
 	}
 	src := l.deckSrc()
 	if src == nil {

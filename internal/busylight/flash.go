@@ -91,6 +91,7 @@ func (a *Agent) FlashFirmware(esptool string, force bool) error {
 		return errors.New("flash already in progress")
 	}
 	defer a.flashing.Store(false)
+	defer a.light.flashing.Store(false)
 
 	tmp, err := os.CreateTemp("", "onit-fw-*.bin")
 	if err != nil {
@@ -108,6 +109,12 @@ func (a *Agent) FlashFirmware(esptool string, force bool) error {
 	a.light.Send("flashing")
 	time.Sleep(400 * time.Millisecond) // let it render before we drop the port
 
+	// From here the port is esptool's. The flag blocks every write through
+	// Light.sendLine — including the background clock push and deck sync,
+	// which the VERSION above can itself have started — so nothing reopens
+	// the port underneath a device mid-erase. Set after the warning screen,
+	// which still has to reach the device.
+	a.light.flashing.Store(true)
 	a.light.Close()        // release the port for esptool
 	a.light.ClearVersion() // the answer must come from the new firmware
 	log.Printf("Flashing %s %s (%d bytes) to %s", board, fwVer, len(image), port)

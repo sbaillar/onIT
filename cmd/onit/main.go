@@ -2,6 +2,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"image/color"
@@ -104,11 +106,16 @@ func main() {
 	agent.SetDeckSource(func() (string, func() [][]byte) {
 		slugs := topEmojiSlugs(a.Preferences().StringList(emojiUsageKey), busylight.DeckSlots)
 		known := currentDeck()
-		sig := make([]string, len(known))
+		names := make([]string, len(known))
 		for i, e := range known {
-			sig[i] = e.Slug
+			names[i] = e.Slug
 		}
-		return strings.Join(sig, "\x00"), func() [][]byte {
+		// Hashed, not the slug list itself: the device stores this in NVS and
+		// echoes it back, so it has to survive a C string (a NUL separator
+		// truncated it to the first slug, and the deck re-uploaded on every
+		// connect) and fit the firmware's 220-byte command buffer.
+		sum := sha256.Sum256([]byte(strings.Join(names, "\n")))
+		return hex.EncodeToString(sum[:8]), func() [][]byte {
 			_, images := emoji.DeckImages(slugs, busylight.DeckSlots)
 			return images
 		}
@@ -471,6 +478,9 @@ func main() {
 				}
 				res := emojiRes(deck[i%len(deck)])
 				fyne.Do(func() {
+					if spinGen.Load() != mine {
+						return // the winner landed while this frame was queued
+					}
 					lastEmoji = res
 					face.Set("emoji", res) // face only: update() rebuilds the tray
 				})
@@ -479,11 +489,16 @@ func main() {
 	}
 
 	spinItem := fyne.NewMenuItem("Spin the wheel", func() {
-		spinFace()
 		go func() {
+			// Only mirror a spin the device actually started: spinFace takes
+			// the "emoji" override, and with no spin there is no winner event
+			// to hand it back, which would strand presence behind a blank
+			// emoji screen.
 			if err := agent.Spin(); err != nil {
 				log.Printf("spin failed: %v", err)
+				return
 			}
+			fyne.Do(spinFace)
 		}()
 	})
 	syncItem := fyne.NewMenuItem("syncing emojis...", nil)

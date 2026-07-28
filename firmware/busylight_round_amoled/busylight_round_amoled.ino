@@ -83,7 +83,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75 for your revision.
  */
 
-#define FW_VERSION "1.6.1"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.7.0"   // extracted by `make firmware`, embedded in onIT
 #define BOARD_TAG  "amoled175"
 
 #include <Arduino_GFX_Library.h>
@@ -326,10 +326,12 @@ void drawSharing() {
   present();
 }
 
-// minimal base64 decoder (standard alphabet); returns bytes written
-int b64decode(const String &in, uint8_t *out, int maxOut) {
+// minimal base64 decoder (standard alphabet); returns bytes written.
+// Decodes from `from` rather than taking a substring: these lines are ~38KB
+// and a copy just to skip the header doubles the peak heap.
+int b64decode(const String &in, uint8_t *out, int maxOut, unsigned int from = 0) {
   int n = 0, buf = 0, bits = 0;
-  for (unsigned int i = 0; i < in.length(); i++) {
+  for (unsigned int i = from; i < in.length(); i++) {
     char c = in[i];
     int v = -1;
     if (c >= 'A' && c <= 'Z') v = c - 'A';
@@ -835,7 +837,8 @@ void handleLine(const String &line) {
     int slot = line.substring(8, c1).toInt();
     if (slot < 0 || slot >= DECK_MAX) return;
     uint8_t flags = line.substring(c1 + 1, c2).toInt() ? EMO_FLAG_DECK_LAST : 0;
-    if (b64decode(line.substring(c2 + 1), deckSave, sizeof(deckSave)) != (int)sizeof(deckSave))
+    if (b64decode(line, deckSave, sizeof(deckSave), c2 + 1) != (int)sizeof(deckSave))
+      return;                              // short or garbled: no ack, the host gives up on this sync
       return;                              // short/garbled image: no ack, host retries
     deckStore(slot, flags);
     char ev[16];
@@ -855,7 +858,7 @@ void handleLine(const String &line) {
   }
   if (line.startsWith("EMOJI:")) {
     lastCmd = millis();
-    int n = b64decode(line.substring(6), (uint8_t *)emojiBuf, sizeof(emojiBuf));
+    int n = b64decode(line, (uint8_t *)emojiBuf, sizeof(emojiBuf), 6);
     emojiValid = (n == (int)sizeof(emojiBuf));
     state = ST_EMOJI;
     lastStateChg = millis();
