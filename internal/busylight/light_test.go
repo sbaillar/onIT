@@ -169,8 +169,8 @@ func TestPushClock(t *testing.T) {
 	if err := l.PushClock(); err != nil {
 		t.Fatalf("PushClock = %v, want nil", err)
 	}
-	if len(f.lines) != 2 {
-		t.Fatalf("PushClock lines = %q, want 2", f.lines)
+	if len(f.lines) != 3 {
+		t.Fatalf("PushClock lines = %q, want 3", f.lines)
 	}
 	// TZ first: the device must render the first TIME: in local time
 	if !strings.HasPrefix(f.lines[0], "TZ:") {
@@ -186,6 +186,11 @@ func TestPushClock(t *testing.T) {
 	}
 	if d := time.Since(time.Unix(epoch, 0)); d < 0 || d > time.Minute {
 		t.Errorf("TIME epoch is %v off from now", d)
+	}
+	// the clock face goes with it, so a device that was reflashed or swapped
+	// comes back to the face the user picked rather than the default
+	if !strings.HasPrefix(f.lines[2], "CLOCK:") {
+		t.Errorf("third line = %q, want a CLOCK: line", f.lines[2])
 	}
 
 	// nothing connected: report it rather than silently doing nothing
