@@ -57,6 +57,13 @@ which also offers prerelease builds — new features before they reach
 stable, with less testing behind them. Unticking it stops offering betas;
 you keep the build you're on until stable passes it.
 
+If the app won't start (so the tray updater is unreachable), update from a
+terminal instead — it downloads the latest release and runs the installer:
+
+```sh
+/Applications/onIT.app/Contents/MacOS/onit -update        # add -beta for prereleases
+```
+
 The onIT dot lives in the menu bar: it mirrors the light's state and the menu
 sets states directly. "Open onIT" shows the control window — Auto and manual
 state buttons, a custom message, emoji, and the connection status. The menu

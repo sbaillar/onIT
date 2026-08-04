@@ -59,7 +59,13 @@ func stateLabel(s string) string {
 
 func main() {
 	hidden := flag.Bool("hidden", false, "start without showing the window (login item)")
+	updateFlag := flag.Bool("update", false, "update to the latest release from the terminal and exit")
+	updateBeta := flag.Bool("beta", false, "with -update: include prerelease builds")
 	flag.Parse()
+	if *updateFlag {
+		// no GUI: this path exists for when the app won't start at all
+		os.Exit(runCLIUpdate(*updateBeta))
+	}
 	setupLogging()
 
 	a := app.NewWithID("casa.baillargeon.onit")
