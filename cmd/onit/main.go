@@ -407,7 +407,18 @@ func main() {
 	// Clock face. The device keeps its own copy in NVS; this pushes changes
 	// and PushClock re-sends it on every connect, so a reflashed device
 	// comes back to the face you picked.
-	clockCheck := widget.NewCheck("White clock face (numbers, red second hand)", func(on bool) {
+	// OnChanged is assigned after SetChecked (same as loginCheck below):
+	// SetChecked fires the callback when the stored pref is true, and at
+	// this point update is still nil — assigning late keeps startup from
+	// calling into it.
+	clockCheck := widget.NewCheck("White clock face (numbers, red second hand)", nil)
+	clockThemeShown = 0
+	if prefs.Bool(whiteClockKey) {
+		clockThemeShown = 1
+	}
+	clockCheck.SetChecked(clockThemeShown == 1)
+	agent.SetClockTheme(clockThemeShown)
+	clockCheck.OnChanged = func(on bool) {
 		prefs.SetBool(whiteClockKey, on)
 		clockThemeShown = 0
 		if on {
@@ -415,13 +426,7 @@ func main() {
 		}
 		agent.SetClockTheme(clockThemeShown)
 		update()
-	})
-	clockThemeShown = 0
-	if prefs.Bool(whiteClockKey) {
-		clockThemeShown = 1
 	}
-	clockCheck.SetChecked(clockThemeShown == 1)
-	agent.SetClockTheme(clockThemeShown)
 
 	loginCheck := widget.NewCheck("Start at login", nil)
 	loginCheck.SetChecked(autostartEnabled())
