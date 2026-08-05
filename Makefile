@@ -26,7 +26,31 @@ FQBN_AMOLED := esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=custom,PSRAM=op
 SKETCH_AMOLED := firmware/busylight_round_amoled
 MINGW   := x86_64-w64-mingw32-gcc
 
-.PHONY: build test app pkg windows windows-gui firmware clean
+.PHONY: build test app pkg windows windows-gui firmware widget clean
+
+# macOS widget: WidgetKit only speaks Swift, so the extension is the one
+# non-Go corner of the app. Built with bare swiftc — no Xcode project.
+APPEX      := build/onITWidget.appex
+WIDGET_MIN := -target arm64-apple-macosx14.0
+
+widget: $(APPEX) $(DIST)/onit-widgetreload
+
+# -e _NSExtensionMain: WidgetKit appexes are NSExtension plug-ins; the entry
+# point is the extension XPC listener, not the Swift-generated main (Xcode's
+# widget template links the same way).
+$(APPEX): widget/Widget.swift widget/appex-Info.plist Makefile
+	rm -rf $(APPEX) && mkdir -p $(APPEX)/Contents/MacOS
+	swiftc -O -parse-as-library $(WIDGET_MIN) \
+		-Xlinker -e -Xlinker _NSExtensionMain \
+		-o $(APPEX)/Contents/MacOS/onITWidget widget/Widget.swift
+	cp widget/appex-Info.plist $(APPEX)/Contents/Info.plist
+	/usr/libexec/PlistBuddy \
+		-c "Set :CFBundleShortVersionString $(VERSION)" \
+		-c "Set :CFBundleVersion $(VERSION)" $(APPEX)/Contents/Info.plist
+
+$(DIST)/onit-widgetreload: widget/reload.swift
+	mkdir -p $(DIST)
+	swiftc -O $(WIDGET_MIN) -o $@ widget/reload.swift
 
 build: $(ESPTOOL)
 	go build $(GOFLAGS) -o $(DIST)/onitctl ./cmd/onitctl
@@ -62,7 +86,7 @@ $(ESPTOOL):
 	chmod +x $(ESPTOOL)
 
 # onIT.app bundle (menu bar app; LSUIElement hides the Dock icon)
-app: $(ESPTOOL)
+app: $(ESPTOOL) widget
 	cd cmd/onit && $(FYNE) package --target darwin --name $(APP) --release \
 		--app-id $(ID) --app-version $(VERSION) --icon ../../assets/icon.png
 	rm -rf $(DIST)/$(APP).app && mkdir -p $(DIST)
@@ -75,18 +99,34 @@ app: $(ESPTOOL)
 		"Add :NSBluetoothAlwaysUsageDescription string 'onIT connects to your busylight over Bluetooth.'" \
 		$(DIST)/$(APP).app/Contents/Info.plist
 	cp $(ESPTOOL) $(DIST)/$(APP).app/Contents/Resources/esptool
+	# the widget extension (WidgetKit appexes are NSExtension plug-ins and
+	# live in Contents/PlugIns) and the reload helper the app execs
+	mkdir -p $(DIST)/$(APP).app/Contents/PlugIns
+	cp -R $(APPEX) $(DIST)/$(APP).app/Contents/PlugIns/
+	cp $(DIST)/onit-widgetreload $(DIST)/$(APP).app/Contents/MacOS/
+	# onit:// — the widget's tap target
+	/usr/libexec/PlistBuddy \
+		-c "Add :CFBundleURLTypes array" \
+		-c "Add :CFBundleURLTypes:0:CFBundleURLName string $(ID).url" \
+		-c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" \
+		-c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string onit" \
+		$(DIST)/$(APP).app/Contents/Info.plist
 	# Sign last, once the bundle is final — editing it afterwards breaks the
 	# seal. macOS ties privacy grants (Bluetooth) to the signing identity, so
 	# an ad-hoc signature, whose identity is the code hash, asks again after
 	# every rebuild. Signing with a stable identity makes the grant stick.
-	# SIGN_ID= skips it (ad-hoc); see README for creating the certificate.
-	@if [ -n "$(SIGN_ID)" ]; then \
-		echo "codesign --sign '$(SIGN_ID)' $(DIST)/$(APP).app"; \
-		codesign --force --deep --options runtime --sign "$(SIGN_ID)" \
-			$(DIST)/$(APP).app || exit 1; \
-	else \
-		echo "SIGN_ID unset: leaving the bundle ad-hoc signed"; \
-	fi
+	# SIGN_ID= signs ad-hoc; see README for creating the certificate.
+	# The appex is signed first, with its sandbox entitlements, and the app
+	# after it WITHOUT --deep: --deep would re-sign the appex and strip the
+	# entitlements, and an unsandboxed widget extension refuses to load.
+	@if [ -n "$(SIGN_ID)" ]; then SIGNER="$(SIGN_ID)"; else \
+		SIGNER="-"; echo "SIGN_ID unset: signing ad-hoc"; fi; \
+	echo "codesign --sign '$$SIGNER' (appex, then app)"; \
+	codesign --force --options runtime \
+		--entitlements widget/appex.entitlements --sign "$$SIGNER" \
+		$(DIST)/$(APP).app/Contents/PlugIns/$(notdir $(APPEX)) || exit 1; \
+	codesign --force --options runtime --sign "$$SIGNER" \
+		$(DIST)/$(APP).app || exit 1
 
 # macOS installer: onIT.app + headless CLI in /usr/local/bin
 # (unsigned: first launch needs right-click > Open)

@@ -477,8 +477,9 @@ func main() {
 	}
 	refreshTrayShortcuts()
 
+	openWindow := func() { w.Show(); w.RequestFocus() }
 	menuItems := []*fyne.MenuItem{
-		fyne.NewMenuItem("Open onIT", func() { w.Show(); w.RequestFocus() }),
+		fyne.NewMenuItem("Open onIT", openWindow),
 		fyne.NewMenuItemSeparator(),
 	}
 	menuItems = append(menuItems, stateItems...)
@@ -726,7 +727,15 @@ func main() {
 			desk.SetSystemTrayIcon(dotResource(stateKey(st.Shown)))
 		}
 	}
-	agent.OnChange(func() { fyne.Do(update) })
+	agent.OnChange(func() {
+		writeWidgetState(agent.Status()) // keep the macOS widget's snapshot fresh
+		fyne.Do(update)
+	})
+	writeWidgetState(agent.Status()) // and seed it at startup
+
+	// the widget's tap opens onit://open; when the app is already running
+	// that lands here — same behavior as the tray's "Open onIT"
+	registerURLHandler(func() { fyne.Do(openWindow) })
 
 	fwBtn.OnTapped = func() {
 		flashing = true
