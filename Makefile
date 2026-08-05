@@ -4,11 +4,26 @@ VERSION := 2.3.0
 DIST    := dist
 FYNE    := go run fyne.io/tools/cmd/fyne@v1.7.2
 GOFLAGS := -trimpath -ldflags "-s -w"
-# Code-signing identity for the .app (see README "Signing"). Stable across
-# builds, so macOS keeps the Bluetooth grant instead of re-asking each time.
-# Empty = ad-hoc, which still runs but re-prompts after every rebuild.
+# Code-signing identity for the .app (see README "Signing"). A Developer ID
+# Application certificate is preferred when present — those builds can be
+# notarized (make notarize) and launch on any Mac without ceremony. The
+# self-created "onIT Dev" cert is the fallback: fine on machines that trust
+# it, blocked by Gatekeeper elsewhere. Empty = ad-hoc, which still runs
+# locally but re-prompts for Bluetooth after every rebuild.
+SIGN_ID := $(shell security find-identity -v -p codesigning 2>/dev/null | \
+             sed -n 's/.*"\(Developer ID Application[^"]*\)"/\1/p' | head -1)
+ifeq ($(SIGN_ID),)
 SIGN_ID := $(shell security find-identity -v -p codesigning 2>/dev/null | \
              sed -n 's/.*"\(onIT Dev\)"/\1/p' | head -1)
+endif
+# Developer ID Installer identity signs the .pkg (required for notarization).
+PKG_SIGN_ID := $(shell security find-identity -v 2>/dev/null | \
+             sed -n 's/.*"\(Developer ID Installer[^"]*\)"/\1/p' | head -1)
+# notarytool keychain profile: xcrun notarytool store-credentials onit-notary ...
+NOTARY_PROFILE := onit-notary
+# Notarization requires secure timestamps on every signature; ad-hoc
+# signatures can't carry one, so the flag rides only with a real identity.
+TSFLAG = $(if $(SIGN_ID),--timestamp,)
 APPLDFLAGS := -trimpath -ldflags "-s -w -X main.appVersion=$(VERSION)"
 
 ESPTOOL_VERSION := v5.3.1
@@ -26,7 +41,7 @@ FQBN_AMOLED := esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=custom,PSRAM=op
 SKETCH_AMOLED := firmware/busylight_round_amoled
 MINGW   := x86_64-w64-mingw32-gcc
 
-.PHONY: build test app pkg windows windows-gui firmware widget clean
+.PHONY: build test app pkg notarize windows windows-gui firmware widget clean
 
 # macOS widget: WidgetKit only speaks Swift, so the extension is the one
 # non-Go corner of the app. Built with bare swiftc — no Xcode project.
@@ -121,20 +136,30 @@ app: $(ESPTOOL) widget
 	# entitlements, and an unsandboxed widget extension refuses to load.
 	@if [ -n "$(SIGN_ID)" ]; then SIGNER="$(SIGN_ID)"; else \
 		SIGNER="-"; echo "SIGN_ID unset: signing ad-hoc"; fi; \
-	echo "codesign --sign '$$SIGNER' (appex, then app)"; \
-	codesign --force --options runtime \
+	echo "codesign --sign '$$SIGNER' (helper, appex, then app)"; \
+	codesign --force --options runtime $(TSFLAG) --sign "$$SIGNER" \
+		$(DIST)/$(APP).app/Contents/MacOS/onit-widgetreload || exit 1; \
+	codesign --force --options runtime $(TSFLAG) \
 		--entitlements widget/appex.entitlements --sign "$$SIGNER" \
 		$(DIST)/$(APP).app/Contents/PlugIns/$(notdir $(APPEX)) || exit 1; \
-	codesign --force --options runtime --sign "$$SIGNER" \
+	codesign --force --options runtime $(TSFLAG) --sign "$$SIGNER" \
 		$(DIST)/$(APP).app || exit 1
 
-# macOS installer: onIT.app + headless CLI in /usr/local/bin
-# (unsigned: first launch needs right-click > Open)
+# macOS installer: onIT.app + headless CLI in /usr/local/bin.
+# With a Developer ID Installer cert the pkg is product-signed (required
+# for notarization); otherwise it ships unsigned and the first launch
+# needs the Gatekeeper dance.
 pkg: app build
 	rm -rf build/pkgroot
 	mkdir -p build/pkgroot/Applications build/pkgroot/usr/local/bin
 	cp -RX $(DIST)/$(APP).app build/pkgroot/Applications/
 	cp -X $(DIST)/onitctl build/pkgroot/usr/local/bin/
+	# onitctl is a standalone executable in the payload; notarization
+	# requires it signed with runtime + timestamp like everything else
+	@if [ -n "$(SIGN_ID)" ]; then \
+		codesign --force --options runtime $(TSFLAG) --sign "$(SIGN_ID)" \
+			build/pkgroot/usr/local/bin/onitctl || exit 1; \
+	fi
 	xattr -rc build/pkgroot
 	# Pin the install location. By default the installer treats an app bundle
 	# as relocatable: if LaunchServices knows the same bundle id somewhere
@@ -143,9 +168,33 @@ pkg: app build
 	# release in the source tree's dist/ instead of /Applications.
 	pkgbuild --analyze --root build/pkgroot build/component.plist
 	/usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" build/component.plist
-	COPYFILE_DISABLE=1 pkgbuild --root build/pkgroot --install-location / \
-		--component-plist build/component.plist \
-		--identifier $(ID) --version $(VERSION) $(DIST)/$(APP)-$(VERSION)-macos-arm64.pkg
+	@if [ -n "$(PKG_SIGN_ID)" ]; then \
+		COPYFILE_DISABLE=1 pkgbuild --root build/pkgroot --install-location / \
+			--component-plist build/component.plist \
+			--identifier $(ID) --version $(VERSION) build/$(APP)-unsigned.pkg && \
+		productsign --sign "$(PKG_SIGN_ID)" build/$(APP)-unsigned.pkg \
+			$(DIST)/$(APP)-$(VERSION)-macos-arm64.pkg && \
+		rm build/$(APP)-unsigned.pkg; \
+	else \
+		COPYFILE_DISABLE=1 pkgbuild --root build/pkgroot --install-location / \
+			--component-plist build/component.plist \
+			--identifier $(ID) --version $(VERSION) \
+			$(DIST)/$(APP)-$(VERSION)-macos-arm64.pkg; \
+	fi
+
+# Notarize the pkg and staple the ticket, so any Mac (managed included)
+# launches it with no Gatekeeper ceremony. Needs a Developer ID build
+# (make pkg with the certs installed) and stored credentials:
+#   xcrun notarytool store-credentials $(NOTARY_PROFILE) \
+#     --apple-id <you@example.com> --team-id <TEAMID> --password <app-specific>
+notarize: pkg
+	@case "$(SIGN_ID)" in "Developer ID Application"*) ;; *) \
+		echo "error: notarization needs a Developer ID Application cert (have: '$(SIGN_ID)')"; \
+		exit 1;; esac
+	xcrun notarytool submit $(DIST)/$(APP)-$(VERSION)-macos-arm64.pkg \
+		--keychain-profile $(NOTARY_PROFILE) --wait
+	xcrun stapler staple $(DIST)/$(APP)-$(VERSION)-macos-arm64.pkg
+	@echo "notarized + stapled: $(DIST)/$(APP)-$(VERSION)-macos-arm64.pkg"
 
 # headless agent for Windows
 windows:

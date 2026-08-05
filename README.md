@@ -202,8 +202,32 @@ security find-identity -v -p codesigning   # should list "onIT Dev"
 ```
 
 Or copy the identity between machines by exporting it from Keychain Access.
-`make app SIGN_ID=` forces an ad-hoc build; `SIGN_ID="Developer ID Application: ..."`
-uses a real Apple identity if you have one.
+`make app SIGN_ID=` forces an ad-hoc build. When a **Developer ID
+Application** certificate is in the keychain the Makefile picks it
+automatically over "onIT Dev".
+
+### Notarization (macOS)
+
+Notarized builds launch on any Mac — managed ones included — with no
+Gatekeeper ceremony. One-time setup, in order:
+
+1. Enroll in the [Apple Developer Program](https://developer.apple.com/programs/enroll/)
+   ($99/yr; approval can take a day or two).
+2. In Xcode → Settings → Accounts (or the developer portal), create the
+   **Developer ID Application** and **Developer ID Installer** certificates;
+   both land in the keychain, where the Makefile finds them by prefix.
+3. Create an [app-specific password](https://appleid.apple.com) and store it:
+
+   ```sh
+   xcrun notarytool store-credentials onit-notary \
+     --apple-id you@example.com --team-id TEAMID --password <app-specific>
+   ```
+
+Then each release is:
+
+```sh
+make notarize   # builds the pkg, product-signs it, submits, staples
+```
 
 `onitctl -ports` lists serial ports if the device isn't detected
 (the app matches USB ID 303A:1001 — add yours in
