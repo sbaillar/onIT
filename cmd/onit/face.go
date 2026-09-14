@@ -195,7 +195,7 @@ func (f *deviceFace) Set(shown string, emojiRes fyne.Resource) {
 	case "meeting": // red, people
 		f.fill(stateColors["meeting"], faceWhite, fs(7))
 		f.people.Show()
-		f.setText(f.lines[0], "In a meeting", 19, faceWhite, 146)
+		f.setText(f.lines[0], "Meeting", 19, faceWhite, 146)
 	case "sharing": // purple, monitor
 		f.fill(stateColors["sharing"], faceWhite, fs(8))
 		f.share.Show()

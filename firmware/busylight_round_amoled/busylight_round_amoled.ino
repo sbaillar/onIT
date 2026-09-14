@@ -11,7 +11,7 @@
  *
  * Serial in : STATE:available|call|meeting|sharing|flashing|off   @115200
  *             (call = mic icon "In a call", meeting = people icon
- *             "In a meeting"; both red)
+ *             "Meeting"; both red)
  *             STATE:custom:<text>       (yellow screen, text auto-fitted)
  *             STATE:custom:RRGGBB,RRGGBB:<text>  (background,font colors)
  *             EMOJI:<base64>            (120x120 RGB565 LE image, pixel-
@@ -93,7 +93,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75 for your revision.
  */
 
-#define FW_VERSION "1.11.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.11.1"   // extracted by `make firmware`, embedded in onIT
 #define BOARD_TAG  "amoled175"
 
 #include <Arduino_GFX_Library.h>
@@ -405,8 +405,7 @@ void drawMeeting() {
   gfx->fillScreen(C_RED_BUSY);
   ringSolid(RING_R, 14, C_WHITE);
   iconPeople(CENTER, 155, C_WHITE);
-  // "In a meeting" is ~414px at 2x 18pt and would touch the ring; 24pt at 1x (~280px) fits
-  textCenteredS("In a meeting", 283, &FreeSansBold24pt7b, 1, C_WHITE);
+  textCentered("Meeting", 283, &FreeSansBold18pt7b, C_WHITE);
   brightness(100);
   present();
 }
