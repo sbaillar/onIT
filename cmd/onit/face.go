@@ -28,6 +28,7 @@ var (
 	faceGrayRing = color.NRGBA{0x40, 0x40, 0x40, 0xFF} // C_GRAY_RING
 	faceGreen    = color.NRGBA{0x90, 0xC4, 0x50, 0xFF} // C_GREEN
 	faceRedSec   = color.NRGBA{0xFF, 0x00, 0x00, 0xFF} // the white face's second hand
+	faceHint     = color.NRGBA{0x8A, 0x8A, 0x8A, 0xFF} // "click to spin", readable on every face
 )
 
 // clockTheme picks the face the device is drawing: 0 dark with ticks,
@@ -74,6 +75,7 @@ type deviceFace struct {
 	share  *canvas.Image
 	emoji  *canvas.Image
 	lines  [5]*canvas.Text // lines[0]/[1] double as the state captions
+	hint   *canvas.Text    // "click to spin" along the bottom, while a device is connected
 
 	// the standalone clock, mirroring the device's own face
 	ticks  []*canvas.Line
@@ -114,6 +116,10 @@ func newDeviceFace() *deviceFace {
 		f.lines[i] = canvas.NewText("", faceWhite)
 		f.lines[i].TextStyle = fyne.TextStyle{Bold: true}
 	}
+	f.hint = canvas.NewText("click to spin", faceHint)
+	f.hint.TextSize = fs(8)
+	f.hint.Alignment = fyne.TextAlignCenter
+	f.hint.Hide()
 
 	f.disc.Resize(fyne.NewSize(faceSize, faceSize))
 	f.dash.Resize(fyne.NewSize(faceSize, faceSize))
@@ -146,6 +152,10 @@ func newDeviceFace() *deviceFace {
 	for _, l := range f.lines {
 		inner.Add(l)
 	}
+	// centered just inside the bottom edge of the circle
+	f.hint.Resize(fyne.NewSize(faceSize, fs(12)))
+	f.hint.Move(fyne.NewPos(0, fs(201)))
+	inner.Add(f.hint)
 	f.root = container.NewGridWrap(fyne.NewSize(faceSize, faceSize), inner)
 	return f
 }
@@ -221,6 +231,19 @@ func (f *deviceFace) Set(shown string, emojiRes fyne.Resource) {
 
 // setClock draws the device's standalone clock. Both faces are mirrored so
 // the window shows what the device shows rather than a placeholder.
+// SetHint shows or hides the "click to spin" caption; it stays across state
+// changes, so it is not part of Set.
+func (f *deviceFace) SetHint(on bool) {
+	if on == f.hint.Visible() {
+		return
+	}
+	if on {
+		f.hint.Show()
+	} else {
+		f.hint.Hide()
+	}
+}
+
 func (f *deviceFace) setClock(now time.Time) {
 	white := clockThemeShown == 1
 	bg := faceBgIdle
