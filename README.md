@@ -115,7 +115,7 @@ in hardware.
 | call | busy, in a meeting or a call, **and your microphone is live** | solid red, mic icon, "In a call" |
 | meeting | busy, in a meeting or a call, microphone idle | solid red, people icon, "In a meeting" |
 | sharing | presenting or do-not-disturb | purple, pulsing ring, "Do not disturb" |
-| off | offline / no presence source for 5 s, or the **Clock** button under Spin | the standalone clock |
+| off | offline / no presence source for 5 s | the standalone clock |
 
 The microphone is what tells a call from a meeting: Teams reports both the
 same way, so onIT watches whether any app is capturing from the default

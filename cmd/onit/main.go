@@ -165,29 +165,15 @@ func main() {
 	busyBar := widget.NewProgressBarInfinite()
 	busyBar.Stop()
 	busyBar.Hide()
-	var spinBtn *spinButton
-	spinBtn = newSpinButton(func() {
+	// the device face is the spin control: click it to run the roulette
+	spinFace := newTapFace(face.root, func() {
 		go func() {
 			if err := agent.Spin(); err != nil {
 				log.Printf("spin failed: %v", err)
 			}
 		}()
 	})
-	// the clock control shows the standalone clock while connected (the
-	// "off" state); pressing it again returns to Auto
-	toggleClock := func() {
-		if agent.Status().Override == "off" {
-			agent.SetOverride("")
-		} else {
-			agent.SetOverride("off")
-		}
-	}
-	clockBtn := widget.NewButtonWithIcon("Clock", clockIcon, toggleClock)
-	clockBtn.Importance = widget.LowImportance
-	// the spin and clock controls sit beside the device face, above the status line
-	header := container.NewVBox(
-		container.NewCenter(container.NewHBox(face.root,
-			container.NewCenter(container.NewVBox(spinBtn, clockBtn)))),
+	header := container.NewVBox(container.NewCenter(spinFace),
 		container.NewCenter(capLbl), busyBar)
 
 	// one choice list drives both the window buttons and the tray menu
@@ -521,7 +507,6 @@ func main() {
 		fyne.Do(func() {
 			lastEmoji = res
 			face.Set("emoji", res)
-			spinBtn.advance()
 		})
 	})
 
@@ -532,7 +517,6 @@ func main() {
 			}
 		}()
 	})
-	clockItem := fyne.NewMenuItem("Show the clock", toggleClock)
 	syncItem := fyne.NewMenuItem("syncing emojis...", nil)
 	syncItem.Disabled = true // indicator line, not clickable (renders dimmed)
 
@@ -566,11 +550,6 @@ func main() {
 		}
 		if st.Transport != "" { // the deck syncs over either link now
 			dev = append(dev, spinItem)
-			clockItem.Label = "Show the clock"
-			if st.Override == "off" {
-				clockItem.Label = "Hide the clock (back to Auto)"
-			}
-			dev = append(dev, clockItem)
 		}
 		if st.PairingLost {
 			dev = append(dev, lostItem)
@@ -660,6 +639,7 @@ func main() {
 		st := agent.Status()
 
 		face.Set(st.Shown, lastEmoji)
+		face.SetHint(st.Transport != "") // spinning needs a device on the line
 
 		src := "no presence source"
 		switch {
