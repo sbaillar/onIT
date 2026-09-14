@@ -20,7 +20,8 @@ func TestMapPresence(t *testing.T) {
 		{"BeRightBack", "BeRightBack", "available"},
 		{"Busy", "InACall", "meeting"},
 		{"Busy", "InAMeeting", "meeting"},
-		{"Busy", "Busy", "available"}, // calendar-busy, no call: calls-only red
+		{"Busy", "Busy", "meeting"}, // calendar-busy shows busy, call or not
+		{"BusyIdle", "Busy", "meeting"},
 		{"DoNotDisturb", "Presenting", "sharing"},
 		{"DoNotDisturb", "DoNotDisturb", "sharing"},
 		{"Offline", "OffWork", "off"},

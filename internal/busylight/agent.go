@@ -235,7 +235,10 @@ func (a *Agent) setSource(s string) {
 	a.notify()
 }
 
-const graphPoll = 5 * time.Second
+const (
+	graphPoll    = 5 * time.Second
+	handoverWait = 500 * time.Millisecond // between presence sources; not an outage
+)
 
 // graphSession polls Microsoft Graph until it errors or the user signs out.
 func (a *Agent) graphSession() error {
@@ -345,9 +348,11 @@ func (a *Agent) Run() {
 		// the device to its standalone clock for the length of the retry and
 		// back, every time Teams rotated its log.
 		var handover *sourceSwitch
-		if !errors.As(err, &handover) {
-			a.setTeams(false, "off")
+		if errors.As(err, &handover) {
+			time.Sleep(handoverWait) // pick the next source up straight away
+			continue
 		}
+		a.setTeams(false, "off")
 		time.Sleep(retryWait)
 	}
 }
