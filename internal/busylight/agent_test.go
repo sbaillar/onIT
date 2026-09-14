@@ -81,10 +81,10 @@ func TestMicRule(t *testing.T) {
 		t.Fatalf("rule off: Shown = %q, want available", got)
 	}
 
-	// rule on: a live mic escalates available to meeting
+	// rule on: a live mic escalates available to call
 	a.SetMicRule(true)
-	if got := a.Status().Shown; got != "meeting" {
-		t.Fatalf("mic active: Shown = %q, want meeting", got)
+	if got := a.Status().Shown; got != "call" {
+		t.Fatalf("mic active: Shown = %q, want call", got)
 	}
 
 	// a real call state is left alone, and overrides still win
@@ -113,8 +113,8 @@ func TestMicRule(t *testing.T) {
 func TestHandleTouch(t *testing.T) {
 	a := NewAgent()
 
-	// tap cycles auto -> available -> meeting -> sharing -> off -> auto
-	for _, want := range []string{"available", "meeting", "sharing", "off", ""} {
+	// tap cycles auto -> available -> call -> meeting -> sharing -> off -> auto
+	for _, want := range []string{"available", "call", "meeting", "sharing", "off", ""} {
 		a.HandleTouch("TAP")
 		if got := a.Status().Override; got != want {
 			t.Fatalf("tap cycle: Override = %q, want %q", got, want)
@@ -145,5 +145,26 @@ func TestHandleTouch(t *testing.T) {
 	a.HandleTouch("SWIPE")
 	if got := a.Status().Override; got != "meeting" {
 		t.Errorf("unknown touch changed Override to %q", got)
+	}
+}
+
+// Presence only says "meeting"; the microphone decides whether that is a
+// call (mic live) or a meeting being sat in (mic idle), rule or no rule.
+func TestMicSplitsMeetingFromCall(t *testing.T) {
+	a := NewAgent()
+	a.mu.Lock()
+	a.teamsUp, a.teamsState = true, "meeting"
+	a.mu.Unlock()
+
+	if got := a.Status().Shown; got != "meeting" {
+		t.Fatalf("mic idle: Shown = %q, want meeting", got)
+	}
+	a.micActive.Store(true)
+	if got := a.Status().Shown; got != "call" {
+		t.Fatalf("mic live: Shown = %q, want call", got)
+	}
+	a.micActive.Store(false)
+	if got := a.Status().Shown; got != "meeting" {
+		t.Fatalf("mic released: Shown = %q, want meeting", got)
 	}
 }

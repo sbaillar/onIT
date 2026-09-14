@@ -36,6 +36,13 @@ func init() {
 	}
 }
 
+// clockIcon is the face-with-hands glyph on the Clock button under SPIN.
+var clockIcon = fyne.NewStaticResource("clock.svg", []byte(
+	`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44" fill="none" stroke="#8A8A8A" stroke-width="3.4" stroke-linecap="round">`+
+		`<circle cx="22" cy="22" r="15"/>`+
+		`<path d="M22 12 V22 L29 26"/>`+
+		`</svg>`))
+
 // spinButton is the arrows-over-SPIN control next to the device face. It is
 // its own widget rather than a widget.Button because the icon sits above the
 // label and has to keep turning while the wheel does.

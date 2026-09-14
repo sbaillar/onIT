@@ -112,9 +112,15 @@ in hardware.
 | State | Trigger (Auto) | Display |
 |---|---|---|
 | available | free, away, or be-right-back | dark, green ring + dot |
-| meeting | busy, in a call or meeting | solid red, mic icon |
+| call | busy, in a meeting or a call, **and your microphone is live** | solid red, mic icon, "In a call" |
+| meeting | busy, in a meeting or a call, microphone idle | solid red, people icon, "In a meeting" |
 | sharing | presenting or do-not-disturb | purple, pulsing ring, "Do not disturb" |
-| off | offline / no presence source for 5 s | near-black dotted ring |
+| off | offline / no presence source for 5 s, or the **Clock** button under Spin | the standalone clock |
+
+The microphone is what tells a call from a meeting: Teams reports both the
+same way, so onIT watches whether any app is capturing from the default
+mic. A tap on the device cycles Auto → Available → In a call → In a
+meeting → Presenting → Clock → Auto.
 
 ## Remote presence (Conditional Access workaround)
 
