@@ -155,8 +155,9 @@ func main() {
 	// the window mirrors the device: the face redraws the firmware screens
 	face := newDeviceFace()
 	var lastEmoji fyne.Resource // image last sent to the device, for the face
-	capLbl := widget.NewLabel("starting...")
-	capLbl.Importance = widget.LowImportance
+	// presence source / light status: a dimmed line at the top of the ? menu
+	statusItem := fyne.NewMenuItem("starting...", nil)
+	statusItem.Disabled = true
 	// Bluetooth indicator (floated top-right below): lit while the BLE link
 	// is carrying the device, dim otherwise. Runic berkanan is the glyph.
 	bleIcon := canvas.NewText("ᛒ", bleIconDim)
@@ -173,8 +174,7 @@ func main() {
 			}
 		}()
 	})
-	header := container.NewVBox(container.NewCenter(spinFace),
-		container.NewCenter(capLbl), busyBar)
+	header := container.NewVBox(container.NewCenter(spinFace), busyBar)
 
 	// one choice list drives both the window buttons and the tray menu
 	type choice struct{ label, state string }
@@ -656,7 +656,7 @@ func main() {
 		if !st.LightConnected {
 			light = "light not found"
 		}
-		capLbl.SetText(src + "  /  " + light)
+		statusItem.Label = src + "  /  " + light
 
 		wantBLE := bleIconDim
 		if st.Transport == "ble" {
@@ -811,6 +811,8 @@ func main() {
 	settingsBtn.Importance = widget.LowImportance
 	// help menu in the top-left corner (an LSUIElement app has no menu bar)
 	helpMenu := fyne.NewMenu("",
+		statusItem,
+		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Check for updates...", func() { checkForUpdates(w, prefs.Bool(betaKey)) }),
 		fyne.NewMenuItem("About onIT...", func() { showAbout(a) }),
 	)
