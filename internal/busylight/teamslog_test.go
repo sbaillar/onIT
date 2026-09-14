@@ -1,6 +1,7 @@
 package busylight
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,10 +18,17 @@ func TestParsePresenceLine(t *testing.T) {
 		{"{ user id :x, availability: Available, unread notification count: 2 }", "available", true},
 		{"{ user id :x, availability: InACall, unread notification count: 0 }", "meeting", true},
 		{"{ user id :x, availability: Presenting, unread notification count: 0 }", "sharing", true},
-		{"{ user id :x, availability: Busy, unread notification count: 0 }", "available", true}, // calendar-busy stays green
-		{"{ user id :x, availability: PresenceUnknown, unread notification count: 0 }", "off", true},
+		{"{ user id :x, availability: Busy, unread notification count: 0 }", "meeting", true}, // calendar-busy shows busy
+		{"{ user id :x, availability: Offline, unread notification count: 0 }", "off", true},
+		// unknown is "not known yet", not a change: hold the last state
+		{"{ user id :x, availability: PresenceUnknown, unread notification count: 0 }", "", false},
 		// JSON-style variant some builds emit
 		{`... "availability":"Away","activity":"Away" ...`, "available", true},
+		// the 2026-09 client phrases it as an update event
+		{"2026-09-14T17:02:29-04:00 0x1234 Inf OnAvailabilityUpdate Received availability update: Busy", "meeting", true},
+		{"OnAvailabilityUpdate Received availability update: DoNotDisturb", "sharing", true},
+		{"OnAvailabilityUpdate Received availability update: Available", "available", true},
+		{"OnAvailabilityUpdate Received availability update: PresenceUnknown", "", false},
 		{"no presence here", "", false},
 	}
 	for _, c := range cases {
@@ -132,5 +140,62 @@ func TestTeamsLogSessionSeedsOnlyCurrentState(t *testing.T) {
 		if s == "meeting" {
 			t.Fatalf("replayed an intermediate state: %v", seen)
 		}
+	}
+}
+
+// Teams writes presence only on change, so a log that has been quiet for
+// longer than the staleness window is still live while the client runs.
+// Giving up on it dropped the agent to the dead legacy socket, which
+// blanked the light for as long as the user's status stayed the same.
+func TestTeamsLogSessionHoldsWhileClientRuns(t *testing.T) {
+	dir := t.TempDir()
+	oldGlobs, oldTick, oldStale, oldRunning := teamsLogGlobs, teamsLogTick, teamsLogStale, teamsClientRunning
+	teamsLogGlobs = []string{filepath.Join(dir, "MSTeams_*.log")}
+	teamsLogTick = 10 * time.Millisecond
+	teamsLogStale = 50 * time.Millisecond
+	running := true
+	teamsClientRunning = func() bool { return running }
+	defer func() {
+		teamsLogGlobs, teamsLogTick, teamsLogStale, teamsClientRunning = oldGlobs, oldTick, oldStale, oldRunning
+	}()
+
+	path := filepath.Join(dir, "MSTeams_2026-09-14.log")
+	os.WriteFile(path, []byte("OnAvailabilityUpdate Received availability update: Busy\n"), 0o644)
+	past := time.Now().Add(-time.Hour)
+	os.Chtimes(path, past, past)
+
+	if !teamsLogAvailable() {
+		t.Fatal("quiet log with the client running was reported unavailable")
+	}
+
+	a := NewAgent()
+	done := make(chan error, 1)
+	go func() { done <- a.teamsLogSession() }()
+	waitFor(t, func() bool { return a.Status().Shown == "meeting" }, "seed state")
+
+	// well past the staleness window: still tailing, still busy
+	time.Sleep(5 * teamsLogStale)
+	select {
+	case err := <-done:
+		t.Fatalf("session gave up on a quiet log while the client runs: %v", err)
+	default:
+	}
+	if got := a.Status().Shown; got != "meeting" {
+		t.Fatalf("state decayed to %q with no new log lines", got)
+	}
+
+	// client gone: now the quiet log is dead and the session hands over
+	running = false
+	select {
+	case err := <-done:
+		var sw *sourceSwitch
+		if !errors.As(err, &sw) {
+			t.Fatalf("stale log ended with %v, want a source switch", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("session did not end after the client went away")
+	}
+	if teamsLogAvailable() {
+		t.Fatal("quiet log with no client was reported available")
 	}
 }

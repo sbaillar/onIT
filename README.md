@@ -111,8 +111,8 @@ in hardware.
 
 | State | Trigger (Auto) | Display |
 |---|---|---|
-| available | free, busy (no call), away, or be-right-back | dark, green ring + dot |
-| meeting | in a call or meeting | solid red, mic icon |
+| available | free, away, or be-right-back | dark, green ring + dot |
+| meeting | busy, in a call or meeting | solid red, mic icon |
 | sharing | presenting or do-not-disturb | purple, pulsing ring, "Do not disturb" |
 | off | offline / no presence source for 5 s | near-black dotted ring |
 

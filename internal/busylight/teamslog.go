@@ -24,18 +24,28 @@ var (
 	teamsLogTick  = 2 * time.Second
 )
 
-const (
-	teamsLogStale    = 10 * time.Minute // no writes for this long: Teams is gone
-	teamsLogSeedSize = 256 << 10        // how far back to look for the current state
-)
+const teamsLogSeedSize = 256 << 10 // how far back to look for the current state
 
-// availability: X / "availability":"X"
-var presenceLineRe = regexp.MustCompile(`[Aa]vailability"?\s*:\s*"?([A-Za-z]+)`)
+// Teams logs presence only when it changes, so a quiet log is not a dead
+// one: while the client is running the log is live however old its mtime.
+// The staleness window only applies when the client can't be seen at all
+// (process detection failed), so the source still winds down eventually.
+// Overridable in tests.
+var teamsLogStale = 10 * time.Minute
+
+// availability: X / "availability":"X" /
+// OnAvailabilityUpdate Received availability update: X
+var presenceLineRe = regexp.MustCompile(`[Aa]vailability(?:\s+[Uu]pdate)?"?\s*:\s*"?([A-Za-z]+)`)
 
 // parsePresenceLine extracts a light state from one Teams log line.
 func parsePresenceLine(line string) (string, bool) {
 	m := presenceLineRe.FindStringSubmatch(line)
 	if m == nil {
+		return "", false
+	}
+	// Unknown is Teams not knowing yet (startup, reconnect), not the user
+	// going away: hold the last state rather than blanking the light.
+	if m[1] == "PresenceUnknown" {
 		return "", false
 	}
 	// the availability field sometimes carries activity values (InACall,
@@ -64,14 +74,21 @@ func newestTeamsLog() (string, error) {
 	return best, nil
 }
 
-// teamsLogAvailable reports whether a recent Teams log exists to tail.
+// teamsLogAvailable reports whether a live Teams log exists to tail: the
+// client is running, or the log was written recently.
 func teamsLogAvailable() bool {
 	path, err := newestTeamsLog()
 	if err != nil {
 		return false
 	}
 	st, err := os.Stat(path)
-	return err == nil && time.Since(st.ModTime()) < teamsLogStale
+	return err == nil && !teamsLogDead(st.ModTime())
+}
+
+// teamsLogDead reports whether a log last written at mod should be given
+// up on. A running client keeps its log live no matter how quiet it is.
+func teamsLogDead(mod time.Time) bool {
+	return time.Since(mod) > teamsLogStale && !teamsClientRunning()
 }
 
 // teamsLogSession tails the newest Teams log until it goes stale or a newer
@@ -138,7 +155,7 @@ func (a *Agent) teamsLogSession() error {
 				}
 			}
 		}
-		if time.Since(st.ModTime()) > teamsLogStale {
+		if teamsLogDead(st.ModTime()) {
 			return &sourceSwitch{"teams log stale (client closed?)"}
 		}
 	}
