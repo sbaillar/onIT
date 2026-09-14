@@ -14,7 +14,8 @@ func TestWidgetStateJSON(t *testing.T) {
 		shown string
 		want  widgetState
 	}{
-		{"meeting", widgetState{State: "meeting", Label: "In a call", Color: "#C03048"}},
+		{"call", widgetState{State: "call", Label: "In a call", Color: "#C03048"}},
+		{"meeting", widgetState{State: "meeting", Label: "In a meeting", Color: "#C03048"}},
 		// custom states carry their message; the key/color must not fall
 		// through to the "off" grey (stateKey normalizes, like the tray)
 		{"custom:Lunch break", widgetState{State: "custom", Label: "Custom", Color: "#E8C24A"}},

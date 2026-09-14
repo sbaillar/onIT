@@ -17,7 +17,11 @@ const (
 )
 
 // States accepted by the firmware, in display order ("off" last).
-var States = []string{"available", "meeting", "sharing", "off"}
+var States = []string{"available", "call", "meeting", "sharing", "off"}
+
+// MenuStates are the states offered as manual choices in the window and
+// tray; "off" (the clock) has its own control.
+var MenuStates = States[:4]
 
 // Status is a snapshot of the agent for UIs.
 type Status struct {
@@ -42,7 +46,7 @@ type Agent struct {
 	Graph     *Graph        // Microsoft Graph presence source (preferred)
 	kick      chan struct{} // wakes the push goroutine after a state change
 	flashing  atomic.Bool   // suspends serial pushes while esptool owns the port
-	micRule   atomic.Bool   // escalate available -> meeting while the mic is live
+	micRule   atomic.Bool   // escalate available -> call while the mic is live
 	micActive atomic.Bool   // last observed microphone state
 
 	mu          sync.Mutex
@@ -77,7 +81,7 @@ func (a *Agent) HandleTouch(kind string) {
 	switch kind {
 	case "TAP":
 		next, ok := map[string]string{
-			"": "available", "available": "meeting",
+			"": "available", "available": "call", "call": "meeting",
 			"meeting": "sharing", "sharing": "off", "off": "",
 		}[cur]
 		if !ok {
@@ -97,19 +101,26 @@ func (a *Agent) HandleTouch(kind string) {
 // Must be set before Run.
 func (a *Agent) OnChange(f func()) { a.onChange = f }
 
-// SetMicRule turns the "live microphone shows In a call" rule on or off.
+// SetMicRule turns the "live microphone shows In a call even when
+// Available" rule on or off. Meeting vs call always follows the mic.
 func (a *Agent) SetMicRule(on bool) {
 	a.micRule.Store(on)
 	a.wake()
 }
 
 // effectiveLocked returns the state the light should show. Caller holds mu.
+// Presence sources only say "meeting" (busy, in a meeting, in a call); the
+// microphone tells a call from a meeting you're merely sitting in.
 func (a *Agent) effectiveLocked() string {
 	if a.override != "" {
 		return a.override
 	}
-	if a.teamsState == "available" && a.micRule.Load() && a.micActive.Load() {
-		return "meeting" // on a call the presence source doesn't know about
+	mic := a.micActive.Load()
+	switch {
+	case a.teamsState == "meeting" && mic:
+		return "call"
+	case a.teamsState == "available" && mic && a.micRule.Load():
+		return "call" // on a call the presence source doesn't know about
 	}
 	return a.teamsState
 }
@@ -314,13 +325,11 @@ func (a *Agent) Run() {
 			time.Sleep(wait)
 		}
 	}()
-	go func() { // watch the microphone for the mic rule
+	go func() { // watch the microphone: it splits meeting from call
 		for {
-			if a.micRule.Load() {
-				if now := micInUse(); now != a.micActive.Load() {
-					a.micActive.Store(now)
-					a.wake()
-				}
+			if now := micInUse(); now != a.micActive.Load() {
+				a.micActive.Store(now)
+				a.wake()
 			}
 			time.Sleep(3 * time.Second)
 		}

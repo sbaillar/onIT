@@ -49,8 +49,10 @@ func shortcutHint(n int) string {
 // stateLabel names a state in the UI, matching the device's own wording.
 func stateLabel(s string) string {
 	switch s {
-	case "meeting":
+	case "call":
 		return "In a call"
+	case "meeting":
+		return "In a meeting"
 	case "sharing":
 		return "Presenting"
 	}
@@ -171,15 +173,27 @@ func main() {
 			}
 		}()
 	})
-	// the spin control sits beside the device face, above the status line
+	// the clock control shows the standalone clock while connected (the
+	// "off" state); pressing it again returns to Auto
+	toggleClock := func() {
+		if agent.Status().Override == "off" {
+			agent.SetOverride("")
+		} else {
+			agent.SetOverride("off")
+		}
+	}
+	clockBtn := widget.NewButtonWithIcon("Clock", clockIcon, toggleClock)
+	clockBtn.Importance = widget.LowImportance
+	// the spin and clock controls sit beside the device face, above the status line
 	header := container.NewVBox(
-		container.NewCenter(container.NewHBox(face.root, container.NewCenter(spinBtn))),
+		container.NewCenter(container.NewHBox(face.root,
+			container.NewCenter(container.NewVBox(spinBtn, clockBtn)))),
 		container.NewCenter(capLbl), busyBar)
 
 	// one choice list drives both the window buttons and the tray menu
 	type choice struct{ label, state string }
 	choices := []choice{{autoLabel, ""}}
-	for _, s := range busylight.States {
+	for _, s := range busylight.MenuStates {
 		choices = append(choices, choice{stateLabel(s), s})
 	}
 	btns := make([]*widget.Button, len(choices))
@@ -518,6 +532,7 @@ func main() {
 			}
 		}()
 	})
+	clockItem := fyne.NewMenuItem("Show the clock", toggleClock)
 	syncItem := fyne.NewMenuItem("syncing emojis...", nil)
 	syncItem.Disabled = true // indicator line, not clickable (renders dimmed)
 
@@ -551,6 +566,11 @@ func main() {
 		}
 		if st.Transport != "" { // the deck syncs over either link now
 			dev = append(dev, spinItem)
+			clockItem.Label = "Show the clock"
+			if st.Override == "off" {
+				clockItem.Label = "Hide the clock (back to Auto)"
+			}
+			dev = append(dev, clockItem)
 		}
 		if st.PairingLost {
 			dev = append(dev, lostItem)

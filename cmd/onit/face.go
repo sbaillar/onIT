@@ -42,6 +42,15 @@ var micIcon = fyne.NewStaticResource("mic.svg", []byte(
 		`<rect x="23" y="34" width="3" height="8" fill="#FFFFFF"/>`+
 		`</svg>`))
 
+// Two people, the front one cut out of the back one, like iconPeople.
+var peopleIcon = fyne.NewStaticResource("people.svg", []byte(
+	`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">`+
+		`<circle cx="32" cy="14" r="6.5" fill="#FFFFFF"/>`+
+		`<path d="M20 40 V33 A12 12 0 0 1 44 33 V40 Z" fill="#FFFFFF"/>`+
+		`<circle cx="17" cy="12" r="8" fill="#FFFFFF" stroke="#C03048" stroke-width="2.5"/>`+
+		`<path d="M2 42 V35 A15 15 0 0 1 32 35 V42 Z" fill="#FFFFFF" stroke="#C03048" stroke-width="2.5"/>`+
+		`</svg>`))
+
 var shareIcon = fyne.NewStaticResource("share.svg", []byte(
 	`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 46 46">`+
 		`<rect x="4" y="7.6" width="38" height="24.7" rx="2" stroke="#FFFFFF" stroke-width="2" fill="none"/>`+
@@ -56,14 +65,15 @@ var dashRing = fyne.NewStaticResource("dashring.svg", []byte(
 		`</svg>`))
 
 type deviceFace struct {
-	root  *fyne.Container
-	disc  *canvas.Circle // fill + solid ring
-	dash  *canvas.Image  // dotted ring (off)
-	dot   *canvas.Circle // presence dot (available)
-	mic   *canvas.Image
-	share *canvas.Image
-	emoji *canvas.Image
-	lines [5]*canvas.Text // lines[0]/[1] double as the state captions
+	root   *fyne.Container
+	disc   *canvas.Circle // fill + solid ring
+	dash   *canvas.Image  // dotted ring (off)
+	dot    *canvas.Circle // presence dot (available)
+	mic    *canvas.Image
+	people *canvas.Image
+	share  *canvas.Image
+	emoji  *canvas.Image
+	lines  [5]*canvas.Text // lines[0]/[1] double as the state captions
 
 	// the standalone clock, mirroring the device's own face
 	ticks  []*canvas.Line
@@ -77,16 +87,17 @@ type deviceFace struct {
 
 func newDeviceFace() *deviceFace {
 	f := &deviceFace{
-		disc:  canvas.NewCircle(faceBgIdle),
-		dash:  canvas.NewImageFromResource(dashRing),
-		dot:   canvas.NewCircle(faceWhite), // on the full-green available screen
-		mic:   canvas.NewImageFromResource(micIcon),
-		share: canvas.NewImageFromResource(shareIcon),
-		emoji: &canvas.Image{FillMode: canvas.ImageFillContain},
-		hourH: canvas.NewLine(faceWhite),
-		minH:  canvas.NewLine(faceLavender),
-		secH:  canvas.NewLine(faceGreen),
-		hub:   canvas.NewCircle(faceLavender),
+		disc:   canvas.NewCircle(faceBgIdle),
+		dash:   canvas.NewImageFromResource(dashRing),
+		dot:    canvas.NewCircle(faceWhite), // on the full-green available screen
+		mic:    canvas.NewImageFromResource(micIcon),
+		people: canvas.NewImageFromResource(peopleIcon),
+		share:  canvas.NewImageFromResource(shareIcon),
+		emoji:  &canvas.Image{FillMode: canvas.ImageFillContain},
+		hourH:  canvas.NewLine(faceWhite),
+		minH:   canvas.NewLine(faceLavender),
+		secH:   canvas.NewLine(faceGreen),
+		hub:    canvas.NewCircle(faceLavender),
 	}
 	f.hubDot = canvas.NewCircle(faceBgIdle)
 	f.hourH.StrokeWidth, f.minH.StrokeWidth, f.secH.StrokeWidth = fs(7), fs(5), fs(3)
@@ -113,13 +124,14 @@ func newDeviceFace() *deviceFace {
 	}
 	place(f.dot, 120, 92, 2*fs(11))
 	place(f.mic, 120, 80, fs(48))
+	place(f.people, 120, 80, fs(48))
 	place(f.share, 120, 74, fs(46))
 
 	place(f.hub, 120, 120, 2*fs(6))
 	place(f.hubDot, 120, 120, 2*fs(3))
 
 	inner := container.NewWithoutLayout(f.disc, f.emoji, f.dash,
-		f.dot, f.mic, f.share)
+		f.dot, f.mic, f.people, f.share)
 	for _, t := range f.ticks {
 		inner.Add(t)
 	}
@@ -158,7 +170,7 @@ func (f *deviceFace) setText(t *canvas.Text, s string, size float32, c color.Col
 // Set renders the screen the firmware draws for shown; emojiRes is the
 // emoji or text image last sent to the device (the wire payload has no name).
 func (f *deviceFace) Set(shown string, emojiRes fyne.Resource) {
-	for _, o := range []fyne.CanvasObject{f.dash, f.dot, f.mic, f.share, f.emoji,
+	for _, o := range []fyne.CanvasObject{f.dash, f.dot, f.mic, f.people, f.share, f.emoji,
 		f.hourH, f.minH, f.secH, f.hub, f.hubDot} {
 		o.Hide()
 	}
@@ -176,10 +188,14 @@ func (f *deviceFace) Set(shown string, emojiRes fyne.Resource) {
 		f.fill(stateColors["available"], faceWhite, fs(4))
 		f.dot.Show()
 		f.setText(f.lines[0], "Available", 19, faceWhite, 136)
-	case "meeting": // red, mic
-		f.fill(stateColors["meeting"], faceWhite, fs(7))
+	case "call": // red, mic
+		f.fill(stateColors["call"], faceWhite, fs(7))
 		f.mic.Show()
 		f.setText(f.lines[0], "In a call", 19, faceWhite, 146)
+	case "meeting": // red, people
+		f.fill(stateColors["meeting"], faceWhite, fs(7))
+		f.people.Show()
+		f.setText(f.lines[0], "In a meeting", 19, faceWhite, 146)
 	case "sharing": // purple, monitor
 		f.fill(stateColors["sharing"], faceWhite, fs(8))
 		f.share.Show()

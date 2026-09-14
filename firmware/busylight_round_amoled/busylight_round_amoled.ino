@@ -9,7 +9,9 @@
  *            has no USB-UART bridge; with it off Serial goes to UART0's pins
  *            and the device is mute over USB) — the Makefile FQBN sets it.
  *
- * Serial in : STATE:available|meeting|sharing|flashing|off   @115200
+ * Serial in : STATE:available|call|meeting|sharing|flashing|off   @115200
+ *             (call = mic icon "In a call", meeting = people icon
+ *             "In a meeting"; both red)
  *             STATE:custom:<text>       (yellow screen, text auto-fitted)
  *             STATE:custom:RRGGBB,RRGGBB:<text>  (background,font colors)
  *             EMOJI:<base64>            (120x120 RGB565 LE image, pixel-
@@ -91,7 +93,7 @@
  * waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75 for your revision.
  */
 
-#define FW_VERSION "1.10.0"   // extracted by `make firmware`, embedded in onIT
+#define FW_VERSION "1.11.0"   // extracted by `make firmware`, embedded in onIT
 #define BOARD_TAG  "amoled175"
 
 #include <Arduino_GFX_Library.h>
@@ -201,7 +203,7 @@ bool touchOk = false;
 XPowersAXP2101 pmu;
 bool pmuOk = false;      // false when the chip isn't there: the key just does nothing
 
-enum State { ST_OFF, ST_AVAILABLE, ST_MEETING, ST_SHARING, ST_FLASHING, ST_CUSTOM, ST_EMOJI,
+enum State { ST_OFF, ST_AVAILABLE, ST_CALL, ST_MEETING, ST_SHARING, ST_FLASHING, ST_CUSTOM, ST_EMOJI,
              ST_ROULETTE_SPIN, ST_ROULETTE_WINNER };
 State state = ST_OFF;
 
@@ -354,6 +356,20 @@ void iconMic(int cx, int cy, uint16_t body, float s = 3.9f) {
   gfx->fillRect(cx - 3, y0 + 17 * s, 6, 4 * s, body);                          // stem
 }
 
+// two people side by side, the right one a little lower and behind; a bg
+// halo around the front one keeps them from merging into a single blob
+void iconPeople(int cx, int cy, uint16_t color, float s = 3.9f, uint16_t bg = C_RED_BUSY) {
+  int x0 = cx - 12 * s, y0 = cy - 12 * s;
+  int bx = x0 + 16.5f * s, fx = x0 + 8.5f * s;                                // back / front person x
+  gfx->fillCircle(bx, y0 + 8 * s, 3.5f * s, color);                           // back head
+  gfx->fillArc(bx, y0 + 22 * s, 6.5f * s, 1, 180, 360, color);                // back shoulders (half-disc)
+  gfx->fillCircle(fx, y0 + 6.5f * s, 5.2f * s, bg);                           // halo
+  gfx->fillArc(fx, y0 + 21 * s, 8.7f * s, 1, 180, 360, bg);
+  gfx->fillRect(fx - 8.7f * s, y0 + 21 * s, 17.4f * s, 1.2f * s, bg);         // halo below the shoulder line
+  gfx->fillCircle(fx, y0 + 6.5f * s, 4 * s, color);                           // front head
+  gfx->fillArc(fx, y0 + 21 * s, 7.5f * s, 1, 180, 360, color);                // front shoulders
+}
+
 void iconShare(int cx, int cy, uint16_t color, float s = 3.7f) {
   int x0 = cx - 12 * s, y0 = cy - 12 * s;
   for (int t = 0; t < 4; t++)                                                  // monitor, 4px stroke
@@ -376,11 +392,21 @@ void drawAvailable() {
   present();
 }
 
-void drawMeeting() {
+void drawCall() {
   gfx->fillScreen(C_RED_BUSY);
   ringSolid(RING_R, 14, C_WHITE);
   iconMic(CENTER, 155, C_WHITE);
   textCentered("In a call", 283, &FreeSansBold18pt7b, C_WHITE);
+  brightness(100);
+  present();
+}
+
+void drawMeeting() {
+  gfx->fillScreen(C_RED_BUSY);
+  ringSolid(RING_R, 14, C_WHITE);
+  iconPeople(CENTER, 155, C_WHITE);
+  // "In a meeting" is ~414px at 2x 18pt and would touch the ring; 24pt at 1x (~280px) fits
+  textCenteredS("In a meeting", 283, &FreeSansBold24pt7b, 1, C_WHITE);
   brightness(100);
   present();
 }
@@ -799,6 +825,7 @@ void redrawState() {
   if (toastUntil) return;                           // toast owns it until it expires
   switch (state) {
     case ST_AVAILABLE:       drawAvailable(); break;
+    case ST_CALL:            drawCall();      break;
     case ST_MEETING:         drawMeeting();   break;
     case ST_SHARING:         drawSharing();   break;
     case ST_FLASHING:        drawFlashing();  break;
@@ -1014,6 +1041,7 @@ void handleLine(const String &line) {
     return;
   }
   if      (s == "available") setState(ST_AVAILABLE);
+  else if (s == "call")      setState(ST_CALL);
   else if (s == "meeting")   setState(ST_MEETING);
   else if (s == "sharing")   setState(ST_SHARING);
   else if (s == "flashing")  setState(ST_FLASHING);

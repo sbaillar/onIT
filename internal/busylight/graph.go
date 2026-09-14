@@ -274,7 +274,8 @@ func (g *Graph) fetchPresence() (string, error) {
 }
 
 // mapPresence converts Graph availability/activity to a firmware state.
-// Graph exposes no mute state, so "muted" never occurs in Graph mode.
+// Anything busy-shaped is "meeting"; the agent promotes it to "call" while
+// the microphone is live (see Agent.effectiveLocked).
 func mapPresence(availability, activity string) string {
 	switch activity {
 	case "Presenting":

@@ -96,14 +96,21 @@ face for 10 seconds, and pair again.</div>
 <h1>5. What the screen shows</h1>
 <table>
   <tr><th>State</th><th>When (Auto mode)</th><th>Display</th></tr>
-  <tr><td>Available</td><td>Free, busy without a call, away, be-right-back</td><td>Full-screen green</td></tr>
-  <tr><td>Meeting</td><td>In a call or meeting (or your mic is in use)</td><td>Solid red with mic icon</td></tr>
+  <tr><td>Available</td><td>Free, away, be-right-back</td><td>Full-screen green</td></tr>
+  <tr><td>In a call</td><td>Busy, in a meeting or a call, <b>and your microphone is live</b></td><td>Solid red with mic icon</td></tr>
+  <tr><td>In a meeting</td><td>Busy, in a meeting or a call, microphone idle</td><td>Solid red with people icon</td></tr>
   <tr><td>Presenting</td><td>Sharing your screen, or Do Not Disturb</td><td>Purple, pulsing ring</td></tr>
-  <tr><td>Off / stale</td><td>No presence source for a few seconds</td><td>The standalone clock</td></tr>
+  <tr><td>Clock</td><td>No presence source for a few seconds, or the <b>Clock</b> button</td><td>The standalone clock</td></tr>
 </table>
+<p>Teams reports a call and a meeting the same way, so onIT uses your microphone to
+tell them apart: while any app is capturing from the default mic you are <b>In a
+call</b>; otherwise you are <b>In a meeting</b>. The <b>Mic in use shows In a call</b>
+setting extends this to the Available state, for calls Teams doesn't know about.</p>
 <p>Manual states, custom text in your chosen colors, and full-screen emoji are set
 from the menu &mdash; manual choices override Teams until you click <b>Auto (Teams)</b>.
-The five custom messages and emojis you use most sit at the top level of the menu.</p>
+The five custom messages and emojis you use most sit at the top level of the menu.
+A tap on the device cycles Auto &rarr; Available &rarr; In a call &rarr; In a meeting
+&rarr; Presenting &rarr; Clock &rarr; Auto.</p>
 
 <h1>6. The standalone clock</h1>
 <p>When no computer is connected, the device doesn&rsquo;t go dark &mdash; it shows a
@@ -122,6 +129,9 @@ stays dimmed and hand-less until onIT connects again, which sets it within secon
   your emojis fast, slows over about five seconds, and lands on a random one, which
   stays up.</li>
   <li><b>From the menu:</b> <b>Spin the wheel</b> does the same remotely while connected.</li>
+  <li><b>Clock on demand:</b> the <b>Clock</b> button under <b>Spin</b> in the window (or <b>Show
+  the clock</b> in the menu) shows the standalone clock while connected; press it again
+  to return to Auto.</li>
   <li>The winner stays until you spin again &mdash; or your computer connects, which
   returns the device to live Teams mode.</li>
 </ul>
