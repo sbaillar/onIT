@@ -86,6 +86,8 @@ func showGraphSetup(a fyne.App, agent *busylight.Agent, refresh func()) {
 
 	// resolveApp reads the Advanced fields, persists them, and returns the
 	// effective client ID and tenant ("" client ID means: tell the user).
+	// graphApp (below) is the same resolution from saved preferences, for
+	// callers without the setup window open.
 	resolveApp := func() (string, string) {
 		id := strings.TrimSpace(clientID.Text)
 		if id == "" {
@@ -206,4 +208,14 @@ func showGraphSetup(a fyne.App, agent *busylight.Agent, refresh func()) {
 	))
 	w.Resize(fyne.NewSize(400, 0))
 	w.Show()
+}
+
+// graphApp returns the client ID and tenant Presence setup saved, with the
+// built-in registration as the default — what the tray's sign-in uses.
+func graphApp(a fyne.App) (id, tenant string) {
+	id = strings.TrimSpace(a.Preferences().String("graphClientID"))
+	if id == "" {
+		id = busylight.DefaultClientID
+	}
+	return id, strings.TrimSpace(a.Preferences().String("graphTenant"))
 }

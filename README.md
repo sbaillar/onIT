@@ -45,6 +45,11 @@ live (`⋆ BLE` / `⚡ USB`).
    about 3 minutes). If your Teams still offers the legacy third-party app
    API (Settings → Privacy), onIT uses that automatically instead until you
    sign in to Graph.
+   The sign-in normally lasts 90 days. If your tenant makes it expire sooner
+   (a sign-in frequency policy), onIT re-signs in through the browser on its
+   own; the tab just says "onIT is signed in" and you can close it. When that
+   silent retry isn't allowed, **Sign in to Microsoft…** appears in the tray
+   menu and is one click. Entra's reason is in the log (`Show log…`).
 4. Plug in the device. If the window shows a firmware update (it will on a
    factory-fresh board), click **Update firmware** — the app flashes the
    bundled firmware over USB in about 30 seconds. Don't unplug during this.

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image/color"
 	"log"
+	"net/url"
 	"os"
 	"runtime"
 	"slices"
@@ -534,6 +535,46 @@ func main() {
 		fyne.NewMenuItemSeparator(),
 		quitItem,
 	}
+	// Graph sign-in recovery. Some tenants reject the refresh token daily
+	// (a sign-in frequency policy), which used to mean a device-code sign-in
+	// every morning. Now the app first retries in the browser with
+	// prompt=none: with a work session there (Platform SSO on a managed Mac)
+	// the tab completes and says "signed in" without a click. Only if that
+	// fails does "Sign in to Microsoft..." appear in the tray, and that is one
+	// click through the browser's account picker — never a code to type.
+	openURL := func(raw string) error {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return err
+		}
+		return a.OpenURL(u)
+	}
+	agent.SetOnSignInRequired(func(reason string) {
+		log.Printf("graph sign-in required (%s); trying a silent browser sign-in", reason)
+		if err := agent.Graph.SilentReauth(openURL); err != nil {
+			log.Printf("silent sign-in failed: %v", err)
+			return
+		}
+		log.Print("graph signed back in silently")
+	})
+	signInItem := fyne.NewMenuItem("Sign in to Microsoft...", func() {
+		id, ten := graphApp(a)
+		bl, err := busylight.StartBrowserLoginPrompt(id, ten, "select_account")
+		if err != nil {
+			log.Printf("graph sign-in: %v", err)
+			return
+		}
+		if err := openURL(bl.AuthURL); err != nil {
+			bl.Cancel()
+			log.Printf("graph sign-in: %v", err)
+			return
+		}
+		go func() {
+			if err := agent.Graph.WaitForBrowserLogin(bl); err != nil {
+				log.Printf("graph sign-in: %v", err)
+			}
+		}()
+	})
 	trayMenu := fyne.NewMenu("onIT")
 	rebuildTray := func(st busylight.Status) {
 		switch st.Transport {
@@ -563,7 +604,11 @@ func main() {
 		if st.BLEBonded {
 			dev = append(dev, forgetItem)
 		}
-		trayMenu.Items = append(append(append([]*fyne.MenuItem{}, menuItems...), dev...), menuTail...)
+		var presence []*fyne.MenuItem
+		if st.SignInNeeded != "" { // the silent retry did not take; offer the click
+			presence = []*fyne.MenuItem{fyne.NewMenuItemSeparator(), signInItem}
+		}
+		trayMenu.Items = append(append(append(append([]*fyne.MenuItem{}, menuItems...), presence...), dev...), menuTail...)
 	}
 	rebuildTray(agent.Status())
 	// roulette winner: nothing intrusive - the "Spin the wheel" line briefly
@@ -651,6 +696,9 @@ func main() {
 			src = "Teams app (local)"
 		case st.TeamsConnected:
 			src = "Teams local API"
+		}
+		if st.SignInNeeded != "" {
+			src += " - Microsoft sign-in needed"
 		}
 		light := "light connected"
 		if !st.LightConnected {
