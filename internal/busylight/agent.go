@@ -36,6 +36,7 @@ type Status struct {
 	BLEBonded      bool   // a BLE busylight is paired
 	PairingLost    bool   // bonded device refused the encrypted link; re-pair
 	DeckSyncing    bool   // roulette deck upload in flight (see Light.SyncDeck)
+	SignInNeeded   string // Graph refresh rejected: Entra's reason; "" while signed in or signed out on purpose
 }
 
 // Agent drives the light from Teams presence, with an optional manual override.
@@ -58,6 +59,8 @@ type Agent struct {
 	override    string // "" = auto
 	last        Status // last status delivered to onChange
 	onChange    func()
+
+	onSignInRequired func(reason string) // Graph refresh rejected; see SetOnSignInRequired
 }
 
 func NewAgent() *Agent {
@@ -144,7 +147,17 @@ func (a *Agent) statusLocked() Status {
 		BLEBonded:      a.light.BLEBonded(),
 		PairingLost:    a.light.PairingLost(),
 		DeckSyncing:    a.light.DeckSyncing(),
+		SignInNeeded:   a.Graph.SignInReason(),
 	}
+}
+
+// SetOnSignInRequired registers what to do when Graph rejects the refresh
+// token (the UI runs SilentReauth). Called on its own goroutine with Entra's
+// reason, once per rejection.
+func (a *Agent) SetOnSignInRequired(fn func(reason string)) {
+	a.mu.Lock()
+	a.onSignInRequired = fn
+	a.mu.Unlock()
 }
 
 // SetOverride forces a state on the light; "" returns to auto (Teams).
@@ -259,6 +272,16 @@ func (a *Agent) graphSession() error {
 		}
 		state, err := a.Graph.Presence()
 		if err != nil {
+			var sir *SignInRequiredError
+			if errors.As(err, &sir) {
+				a.mu.Lock()
+				hook := a.onSignInRequired
+				a.mu.Unlock()
+				if hook != nil {
+					go hook(sir.Reason)
+				}
+				return &sourceSwitch{"graph sign-in required"}
+			}
 			return err
 		}
 		a.setTeams(true, state)

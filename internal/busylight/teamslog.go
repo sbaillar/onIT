@@ -131,6 +131,9 @@ func (a *Agent) teamsLogSession() error {
 	rest := "" // partial trailing line between reads
 	for {
 		time.Sleep(teamsLogTick)
+		if a.Graph.SignedIn() { // a re-auth landed: Graph is the preferred source
+			return &sourceSwitch{"graph signed in"}
+		}
 		if np, err := newestTeamsLog(); err == nil && np != path {
 			return &sourceSwitch{"teams log rotated"}
 		}

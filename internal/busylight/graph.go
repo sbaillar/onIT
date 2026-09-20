@@ -42,10 +42,70 @@ func graphTokenFile() string {
 
 // Graph polls Microsoft Graph for the signed-in user's Teams presence.
 type Graph struct {
-	mu     sync.Mutex
-	creds  graphCreds
-	access string
-	expiry time.Time
+	mu         sync.Mutex
+	creds      graphCreds
+	access     string
+	expiry     time.Time
+	reason     string    // why the last refresh was rejected; "" while signed in
+	lastSilent time.Time // last SilentReauth attempt (success or not)
+}
+
+// SignInRequiredError means the refresh token was rejected and the user (or
+// SilentReauth) has to sign in again. Reason is Entra's own explanation,
+// usually an AADSTS code naming the policy behind it.
+type SignInRequiredError struct{ Reason string }
+
+func (e *SignInRequiredError) Error() string { return "sign-in required: " + e.Reason }
+
+// SignInReason is Entra's explanation for the last rejected refresh, or ""
+// while signed in.
+func (g *Graph) SignInReason() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.reason
+}
+
+// Overridable in tests.
+var (
+	silentReauthEvery   = 30 * time.Minute
+	silentReauthTimeout = 90 * time.Second
+)
+
+// SilentReauth tries to sign back in without the user: it opens the browser
+// on the authorize URL with prompt=none, which completes on its own when the
+// browser holds a work session (Platform SSO on a managed Mac) and fails fast
+// with login_required otherwise. open receives the URL to launch. At most one
+// attempt per silentReauthEvery so a policy that rejects every refresh cannot
+// keep opening tabs.
+func (g *Graph) SilentReauth(open func(authURL string) error) error {
+	g.mu.Lock()
+	id, tenant, last := g.creds.ClientID, g.creds.Tenant, g.lastSilent
+	g.mu.Unlock()
+	if id == "" {
+		return errors.New("no app registration to sign into")
+	}
+	if time.Since(last) < silentReauthEvery {
+		return errors.New("silent sign-in already attempted recently")
+	}
+	g.mu.Lock()
+	g.lastSilent = time.Now()
+	g.mu.Unlock()
+	bl, err := StartBrowserLoginPrompt(id, tenant, "none")
+	if err != nil {
+		return err
+	}
+	bl.timeout = silentReauthTimeout
+	if err := open(bl.AuthURL); err != nil {
+		bl.Cancel()
+		return err
+	}
+	if err := g.WaitForBrowserLogin(bl); err != nil {
+		g.mu.Lock()
+		g.reason = err.Error()
+		g.mu.Unlock()
+		return err
+	}
+	return nil
 }
 
 // LoadGraph restores a previous sign-in from disk (empty Graph if none).
@@ -69,6 +129,7 @@ func (g *Graph) SignOut() {
 	defer g.mu.Unlock()
 	g.creds = graphCreds{}
 	g.access = ""
+	g.reason = ""
 	os.Remove(graphTokenFile())
 }
 
@@ -173,6 +234,7 @@ func (g *Graph) WaitForLogin(dc *DeviceCode) error {
 			g.creds = graphCreds{ClientID: dc.clientID, Tenant: dc.tenant, RefreshToken: tr.RefreshToken}
 			g.access = tr.AccessToken
 			g.expiry = time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
+			g.reason = ""
 			g.saveLocked()
 			g.mu.Unlock()
 			return nil
@@ -216,9 +278,16 @@ func (g *Graph) token() (string, error) {
 		return "", err
 	}
 	if tr.Error != "" {
-		if tr.Error == "invalid_grant" { // revoked/expired: force re-login
+		switch tr.Error {
+		case "invalid_grant", "interaction_required":
+			// Revoked, expired, or a Conditional Access policy demanding a
+			// fresh sign-in: the refresh token is dead. Keep the client ID
+			// and tenant so SilentReauth knows what to sign back into.
 			g.creds.RefreshToken = ""
+			g.access = ""
+			g.reason = tr.err().Error()
 			os.Remove(graphTokenFile())
+			return "", &SignInRequiredError{Reason: g.reason}
 		}
 		return "", tr.err()
 	}

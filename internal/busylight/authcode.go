@@ -30,6 +30,7 @@ type BrowserLogin struct {
 	ln       net.Listener
 	result   chan browserResult
 	once     sync.Once
+	timeout  time.Duration
 }
 
 type browserResult struct {
@@ -46,6 +47,13 @@ func randToken(n int) string {
 // StartBrowserLogin opens a loopback listener and builds the authorize URL
 // for an auth-code + PKCE sign-in. Tenant defaults to "organizations".
 func StartBrowserLogin(clientID, tenant string) (*BrowserLogin, error) {
+	return StartBrowserLoginPrompt(clientID, tenant, "")
+}
+
+// StartBrowserLoginPrompt is StartBrowserLogin with an OAuth prompt value:
+// "none" completes silently or fails with login_required, "select_account"
+// always shows the account picker, "" lets Entra decide.
+func StartBrowserLoginPrompt(clientID, tenant, prompt string) (*BrowserLogin, error) {
 	if tenant == "" {
 		tenant = "organizations"
 	}
@@ -61,9 +69,10 @@ func StartBrowserLogin(clientID, tenant string) (*BrowserLogin, error) {
 		redirect: fmt.Sprintf("http://localhost:%d", ln.Addr().(*net.TCPAddr).Port),
 		ln:       ln,
 		result:   make(chan browserResult, 1),
+		timeout:  15 * time.Minute,
 	}
 	sum := sha256.Sum256([]byte(bl.verifier))
-	bl.AuthURL = loginBase + "/" + tenant + "/oauth2/v2.0/authorize?" + url.Values{
+	q := url.Values{
 		"client_id":             {clientID},
 		"response_type":         {"code"},
 		"redirect_uri":          {bl.redirect},
@@ -71,7 +80,11 @@ func StartBrowserLogin(clientID, tenant string) (*BrowserLogin, error) {
 		"code_challenge":        {base64.RawURLEncoding.EncodeToString(sum[:])},
 		"code_challenge_method": {"S256"},
 		"state":                 {bl.state},
-	}.Encode()
+	}
+	if prompt != "" {
+		q.Set("prompt", prompt)
+	}
+	bl.AuthURL = loginBase + "/" + tenant + "/oauth2/v2.0/authorize?" + q.Encode()
 	go http.Serve(ln, http.HandlerFunc(bl.handle))
 	return bl, nil
 }
@@ -112,7 +125,7 @@ func (g *Graph) WaitForBrowserLogin(bl *BrowserLogin) error {
 	var res browserResult
 	select {
 	case res = <-bl.result:
-	case <-time.After(15 * time.Minute):
+	case <-time.After(bl.timeout):
 		return errors.New("sign-in timed out")
 	}
 	if res.err != nil {
@@ -146,6 +159,7 @@ func (g *Graph) WaitForBrowserLogin(bl *BrowserLogin) error {
 	g.creds = graphCreds{ClientID: bl.clientID, Tenant: bl.tenant, RefreshToken: tr.RefreshToken}
 	g.access = tr.AccessToken
 	g.expiry = time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
+	g.reason = ""
 	g.saveLocked()
 	g.mu.Unlock()
 	return nil
