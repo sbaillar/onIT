@@ -142,7 +142,9 @@ pkg: app build
 	# who has ever run a build from another directory hits this — it landed a
 	# release in the source tree's dist/ instead of /Applications.
 	pkgbuild --analyze --root build/pkgroot build/component.plist
-	/usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" build/component.plist
+	# macOS 27's pkgbuild --analyze no longer writes the key, so Set fails; Add it then.
+	/usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" build/component.plist \
+		|| /usr/libexec/PlistBuddy -c "Add :0:BundleIsRelocatable bool false" build/component.plist
 	COPYFILE_DISABLE=1 pkgbuild --root build/pkgroot --install-location / \
 		--component-plist build/component.plist \
 		--identifier $(ID) --version $(VERSION) $(DIST)/$(APP)-$(VERSION)-macos-arm64.pkg
