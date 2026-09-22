@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -131,11 +132,20 @@ func TestTeamsLogSessionSeedsOnlyCurrentState(t *testing.T) {
 			"{ user id :x, availability: Presenting, unread notification count: 0 }\n"), 0o644)
 
 	a := NewAgent()
-	var seen []string
+	var seen []string // appended on the session goroutine; read only after it exits
 	a.OnChange(func() { seen = append(seen, a.Status().Shown) })
-	go a.teamsLogSession()
+	done := make(chan error, 1)
+	go func() { done <- a.teamsLogSession() }()
 
 	waitFor(t, func() bool { return a.Status().Shown == "sharing" }, "seeded to the newest state")
+	// rotate the log so the session returns; a leaked session kept reading the
+	// package globals while the next test reassigned them (a real data race)
+	os.WriteFile(filepath.Join(dir, "MSTeams_2026-07-24.log"), nil, 0o644)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("session did not stop after the log rotated")
+	}
 	for _, s := range seen {
 		if s == "meeting" {
 			t.Fatalf("replayed an intermediate state: %v", seen)
@@ -153,8 +163,9 @@ func TestTeamsLogSessionHoldsWhileClientRuns(t *testing.T) {
 	teamsLogGlobs = []string{filepath.Join(dir, "MSTeams_*.log")}
 	teamsLogTick = 10 * time.Millisecond
 	teamsLogStale = 50 * time.Millisecond
-	running := true
-	teamsClientRunning = func() bool { return running }
+	var running atomic.Bool // written by the test, read by the session goroutine
+	running.Store(true)
+	teamsClientRunning = running.Load
 	defer func() {
 		teamsLogGlobs, teamsLogTick, teamsLogStale, teamsClientRunning = oldGlobs, oldTick, oldStale, oldRunning
 	}()
@@ -185,7 +196,7 @@ func TestTeamsLogSessionHoldsWhileClientRuns(t *testing.T) {
 	}
 
 	// client gone: now the quiet log is dead and the session hands over
-	running = false
+	running.Store(false)
 	select {
 	case err := <-done:
 		var sw *sourceSwitch
