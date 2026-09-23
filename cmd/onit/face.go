@@ -13,11 +13,12 @@ import (
 
 // The round face replicates the firmware's 240x240 screen layouts
 // (drawAvailable & co. in busylight_round.ino) at faceSize pixels,
-// so the window shows exactly what the device shows.
-const faceSize = 190
-
-// fs scales a firmware screen coordinate (240px) to face pixels.
-func fs(v float32) float32 { return v * faceSize / 240 }
+// so the window shows exactly what the device shows. The compact view
+// draws the same screens smaller.
+const (
+	faceSize        = 190
+	compactFaceSize = 120
+)
 
 var (
 	faceWhite    = color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
@@ -66,6 +67,7 @@ var dashRing = fyne.NewStaticResource("dashring.svg", []byte(
 		`</svg>`))
 
 type deviceFace struct {
+	size   float32 // on-screen diameter in pixels
 	root   *fyne.Container
 	disc   *canvas.Circle // fill + solid ring
 	dash   *canvas.Image  // dotted ring (off)
@@ -87,8 +89,15 @@ type deviceFace struct {
 	hubDot *canvas.Circle
 }
 
-func newDeviceFace() *deviceFace {
+// fs scales a firmware screen coordinate (240px) to face pixels.
+func (f *deviceFace) fs(v float32) float32 { return v * f.size / 240 }
+
+// ts scales a text size picked for the full-size face to this one.
+func (f *deviceFace) ts(v float32) float32 { return v * f.size / faceSize }
+
+func newDeviceFace(size float32) *deviceFace {
 	f := &deviceFace{
+		size:   size,
 		disc:   canvas.NewCircle(faceBgIdle),
 		dash:   canvas.NewImageFromResource(dashRing),
 		dot:    canvas.NewCircle(faceWhite), // on the full-green available screen
@@ -102,10 +111,10 @@ func newDeviceFace() *deviceFace {
 		hub:    canvas.NewCircle(faceLavender),
 	}
 	f.hubDot = canvas.NewCircle(faceBgIdle)
-	f.hourH.StrokeWidth, f.minH.StrokeWidth, f.secH.StrokeWidth = fs(7), fs(5), fs(3)
+	f.hourH.StrokeWidth, f.minH.StrokeWidth, f.secH.StrokeWidth = f.fs(7), f.fs(5), f.fs(3)
 	for i := 0; i < 60; i++ {
 		l := canvas.NewLine(faceGrayRing)
-		l.StrokeWidth = fs(1)
+		l.StrokeWidth = f.fs(1)
 		f.ticks = append(f.ticks, l)
 	}
 	for i := range f.nums {
@@ -117,24 +126,24 @@ func newDeviceFace() *deviceFace {
 		f.lines[i].TextStyle = fyne.TextStyle{Bold: true}
 	}
 	f.hint = canvas.NewText("click to spin", faceHint)
-	f.hint.TextSize = fs(8)
+	f.hint.TextSize = max(f.fs(8), 7) // stays legible on the compact face
 	f.hint.Alignment = fyne.TextAlignCenter
 	f.hint.Hide()
 
-	f.disc.Resize(fyne.NewSize(faceSize, faceSize))
-	f.dash.Resize(fyne.NewSize(faceSize, faceSize))
-	f.emoji.Resize(fyne.NewSize(faceSize, faceSize))
+	f.disc.Resize(fyne.NewSize(f.size, f.size))
+	f.dash.Resize(fyne.NewSize(f.size, f.size))
+	f.emoji.Resize(fyne.NewSize(f.size, f.size))
 	place := func(o fyne.CanvasObject, cx, cy, size float32) {
 		o.Resize(fyne.NewSize(size, size))
-		o.Move(fyne.NewPos(fs(cx)-size/2, fs(cy)-size/2))
+		o.Move(fyne.NewPos(f.fs(cx)-size/2, f.fs(cy)-size/2))
 	}
-	place(f.dot, 120, 92, 2*fs(11))
-	place(f.mic, 120, 80, fs(48))
-	place(f.people, 120, 80, fs(48))
-	place(f.share, 120, 74, fs(46))
+	place(f.dot, 120, 92, 2*f.fs(11))
+	place(f.mic, 120, 80, f.fs(48))
+	place(f.people, 120, 80, f.fs(48))
+	place(f.share, 120, 74, f.fs(46))
 
-	place(f.hub, 120, 120, 2*fs(6))
-	place(f.hubDot, 120, 120, 2*fs(3))
+	place(f.hub, 120, 120, 2*f.fs(6))
+	place(f.hubDot, 120, 120, 2*f.fs(3))
 
 	inner := container.NewWithoutLayout(f.disc, f.emoji, f.dash,
 		f.dot, f.mic, f.people, f.share)
@@ -153,11 +162,27 @@ func newDeviceFace() *deviceFace {
 		inner.Add(l)
 	}
 	// centered just inside the bottom edge of the circle
-	f.hint.Resize(fyne.NewSize(faceSize, fs(12)))
-	f.hint.Move(fyne.NewPos(0, fs(201)))
+	f.hint.Resize(fyne.NewSize(f.size, f.fs(12)))
+	f.hint.Move(fyne.NewPos(0, f.fs(201)))
 	inner.Add(f.hint)
-	f.root = container.NewGridWrap(fyne.NewSize(faceSize, faceSize), inner)
+	f.root = container.NewGridWrap(fyne.NewSize(f.size, f.size), inner)
 	return f
+}
+
+// faceSet keeps several faces on the same screen: the large and compact
+// views each have their own, and whichever is on show must be current.
+type faceSet []*deviceFace
+
+func (fs faceSet) Set(shown string, emojiRes fyne.Resource) {
+	for _, f := range fs {
+		f.Set(shown, emojiRes)
+	}
+}
+
+func (fs faceSet) SetHint(on bool) {
+	for _, f := range fs {
+		f.SetHint(on)
+	}
 }
 
 func (f *deviceFace) fill(bg, ring color.Color, ringW float32) {
@@ -167,12 +192,13 @@ func (f *deviceFace) fill(bg, ring color.Color, ringW float32) {
 	f.disc.Refresh()
 }
 
-// setText centers s at screen-y cy, like the firmware's textCentered.
+// setText centers s at screen-y cy, like the firmware's textCentered. size
+// is in points on the full-size face; smaller faces scale it down.
 func (f *deviceFace) setText(t *canvas.Text, s string, size float32, c color.Color, cy float32) {
-	t.Text, t.TextSize, t.Color = s, size, c
+	t.Text, t.TextSize, t.Color = s, f.ts(size), c
 	m := fyne.MeasureText(s, size, t.TextStyle)
 	t.Resize(m)
-	t.Move(fyne.NewPos(faceSize/2-m.Width/2, fs(cy)-m.Height/2))
+	t.Move(fyne.NewPos(f.size/2-m.Width/2, f.fs(cy)-m.Height/2))
 	t.Show()
 	t.Refresh()
 }
@@ -195,25 +221,25 @@ func (f *deviceFace) Set(shown string, emojiRes fyne.Resource) {
 	}
 	switch stateKey(shown) {
 	case "available": // full-screen green, white ring and dot
-		f.fill(stateColors["available"], faceWhite, fs(4))
+		f.fill(stateColors["available"], faceWhite, f.fs(4))
 		f.dot.Show()
 		f.setText(f.lines[0], "Available", 19, faceWhite, 136)
 	case "call": // red, mic
-		f.fill(stateColors["call"], faceWhite, fs(7))
+		f.fill(stateColors["call"], faceWhite, f.fs(7))
 		f.mic.Show()
 		f.setText(f.lines[0], "In a call", 19, faceWhite, 146)
 	case "meeting": // red, people
-		f.fill(stateColors["meeting"], faceWhite, fs(7))
+		f.fill(stateColors["meeting"], faceWhite, f.fs(7))
 		f.people.Show()
 		f.setText(f.lines[0], "Meeting", 19, faceWhite, 146)
 	case "sharing": // purple, monitor
-		f.fill(stateColors["sharing"], faceWhite, fs(8))
+		f.fill(stateColors["sharing"], faceWhite, f.fs(8))
 		f.share.Show()
 		f.setText(f.lines[0], "Presenting", 19, faceWhite, 134)
 		f.setText(f.lines[1], "Do not disturb", 10, faceLavender, 164)
 	case "custom": // user-colored (default yellow), auto-fitted message
 		bg, fg, text := splitCustom(strings.TrimPrefix(shown, "custom:"))
-		f.fill(hexColor(bg), hexColor(fg), fs(5))
+		f.fill(hexColor(bg), hexColor(fg), f.fs(5))
 		f.setCustom(text, hexColor(fg))
 	case "emoji":
 		f.fill(faceBgIdle, faceBgIdle, 0)
@@ -255,9 +281,9 @@ func (f *deviceFace) setClock(now time.Time) {
 	// hour marks: numerals at 12/3/6/9 on the white face, ticks on the dark
 	if white {
 		for i, label := range [4]string{"12", "3", "6", "9"} {
-			cx, cy := clockPoint(float64(i)*90, 84)
+			cx, cy := f.clockPoint(float64(i)*90, 84)
 			n := f.nums[i]
-			n.Text, n.TextSize, n.Color = label, 15, faceBlack
+			n.Text, n.TextSize, n.Color = label, f.ts(15), faceBlack
 			m := fyne.MeasureText(n.Text, n.TextSize, n.TextStyle)
 			n.Resize(m)
 			n.Move(fyne.NewPos(cx-m.Width/2, cy-m.Height/2))
@@ -268,14 +294,14 @@ func (f *deviceFace) setClock(now time.Time) {
 			if i%5 != 0 || i%15 == 0 {
 				continue // only the eight hours without a numeral
 			}
-			f.setLine(t, float64(i)*6, 101, 109, faceBlack, fs(2))
+			f.setLine(t, float64(i)*6, 101, 109, faceBlack, f.fs(2))
 		}
 	} else {
 		for i, t := range f.ticks {
 			if i%5 == 0 {
-				f.setLine(t, float64(i)*6, 99, 110, faceLavender, fs(2))
+				f.setLine(t, float64(i)*6, 99, 110, faceLavender, f.fs(2))
 			} else {
-				f.setLine(t, float64(i)*6, 105, 110, faceGrayRing, fs(1))
+				f.setLine(t, float64(i)*6, 105, 110, faceGrayRing, f.fs(1))
 			}
 		}
 	}
@@ -295,17 +321,17 @@ func (f *deviceFace) setClock(now time.Time) {
 	f.hubDot.Refresh()
 }
 
-// clockPoint is the screen position of a point at angle deg (0 = 12 o'clock,
+// clockPoint is the face position position of a point at angle deg (0 = 12 o'clock,
 // clockwise) and radius r, in the firmware's 240px coordinates.
-func clockPoint(deg, r float64) (x, y float32) {
+func (f *deviceFace) clockPoint(deg, r float64) (x, y float32) {
 	rad := deg * math.Pi / 180
-	return fs(120) + fs(float32(math.Sin(rad)*r)), fs(120) - fs(float32(math.Cos(rad)*r))
+	return f.fs(120) + f.fs(float32(math.Sin(rad)*r)), f.fs(120) - f.fs(float32(math.Cos(rad)*r))
 }
 
 // setLine places a radial line between two radii, for the hour marks.
 func (f *deviceFace) setLine(l *canvas.Line, deg, r1, r2 float64, c color.Color, w float32) {
-	x1, y1 := clockPoint(deg, r1)
-	x2, y2 := clockPoint(deg, r2)
+	x1, y1 := f.clockPoint(deg, r1)
+	x2, y2 := f.clockPoint(deg, r2)
 	l.Position1, l.Position2 = fyne.NewPos(x1, y1), fyne.NewPos(x2, y2)
 	l.StrokeColor, l.StrokeWidth = c, w
 	l.Show()
@@ -315,8 +341,8 @@ func (f *deviceFace) setLine(l *canvas.Line, deg, r1, r2 float64, c color.Color,
 // setHand draws a hand from the hub out to length (firmware coordinates),
 // with the same short tail behind the pivot the device draws.
 func (f *deviceFace) setHand(l *canvas.Line, deg, length float64, c color.Color) {
-	x1, y1 := clockPoint(deg+180, 12)
-	x2, y2 := clockPoint(deg, length)
+	x1, y1 := f.clockPoint(deg+180, 12)
+	x2, y2 := f.clockPoint(deg, length)
 	l.Position1, l.Position2 = fyne.NewPos(x1, y1), fyne.NewPos(x2, y2)
 	l.StrokeColor = c
 	l.Show()
@@ -338,7 +364,7 @@ func customChord(yTop, yBot float32) float32 {
 
 // customLayout wraps words into at most n vertically-centered lines,
 // honoring each line's chord width. ok is false if they don't fit.
-func customLayout(words []string, size, lineH float32, n int) (lines []string, ok bool) {
+func customLayout(words []string, size, lineH, faceD float32, n int) (lines []string, ok bool) {
 	style := fyne.TextStyle{Bold: true}
 	top := 120 - lineH*float32(n)/2
 	w := 0
@@ -350,7 +376,7 @@ func customLayout(words []string, size, lineH float32, n int) (lines []string, o
 			if line != "" {
 				cand = line + " " + words[w]
 			}
-			if fyne.MeasureText(cand, size, style).Width*240/faceSize > maxW {
+			if fyne.MeasureText(cand, size, style).Width*240/faceD > maxW {
 				break
 			}
 			line = cand
@@ -372,10 +398,10 @@ func (f *deviceFace) setCustom(msg string, fg color.Color) {
 	style := fyne.TextStyle{Bold: true}
 	// mirrors the firmware ladder: pixel-doubled 24/18pt, then 24/18/12/9pt
 	for _, size := range []float32{51, 38, 25, 19, 14, 10} {
-		lineH := fyne.MeasureText("Agy", size, style).Height * 240 / faceSize * 1.05
+		lineH := fyne.MeasureText("Agy", f.ts(size), style).Height * 240 / f.size * 1.05
 		maxLines := min(len(f.lines), int(2*customRadius/lineH))
 		for n := 1; n <= maxLines; n++ {
-			lines, ok := customLayout(words, size, lineH, n)
+			lines, ok := customLayout(words, f.ts(size), lineH, f.size, n)
 			if !ok {
 				continue
 			}

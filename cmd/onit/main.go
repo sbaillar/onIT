@@ -153,8 +153,9 @@ func main() {
 	w.SetFixedSize(true)
 	w.SetCloseIntercept(w.Hide)
 
-	// the window mirrors the device: the face redraws the firmware screens
-	face := newDeviceFace()
+	// the window mirrors the device: the face redraws the firmware screens.
+	// The large and compact views each hold one; both track the device.
+	face := faceSet{newDeviceFace(faceSize), newDeviceFace(compactFaceSize)}
 	var lastEmoji fyne.Resource // image last sent to the device, for the face
 	// presence source / light status: a dimmed line at the top of the ? menu
 	statusItem := fyne.NewMenuItem("starting...", nil)
@@ -168,14 +169,15 @@ func main() {
 	busyBar.Stop()
 	busyBar.Hide()
 	// the device face is the spin control: click it to run the roulette
-	spinFace := newTapFace(face.root, func() {
+	spin := func() {
 		go func() {
 			if err := agent.Spin(); err != nil {
 				log.Printf("spin failed: %v", err)
 			}
 		}()
-	})
-	header := container.NewVBox(container.NewCenter(spinFace), busyBar)
+	}
+	spinFace := newTapFace(face[0].root, spin)
+	miniSpinFace := newTapFace(face[1].root, spin)
 
 	// one choice list drives both the window buttons and the tray menu
 	type choice struct{ label, state string }
@@ -184,14 +186,23 @@ func main() {
 		choices = append(choices, choice{stateLabel(s), s})
 	}
 	btns := make([]*widget.Button, len(choices))
+	// the compact view's states: just the dot, with the shortcut beneath it
+	miniBtns := make([]*widget.Button, len(choices))
+	miniHints := make([]*canvas.Text, len(choices))
 	stateItems := make([]*fyne.MenuItem, len(choices))
 	for i, c := range choices {
 		if c.state == "" {
 			btns[i] = widget.NewButton(c.label, func() { agent.SetOverride(c.state) })
+			miniBtns[i] = widget.NewButton("Auto", func() { agent.SetOverride(c.state) })
 		} else {
 			// state buttons carry their window shortcut (cmd/ctrl+1-4)
 			btns[i] = widget.NewButtonWithIcon(c.label+"  "+shortcutHint(i),
 				dotResource(c.state), func() { agent.SetOverride(c.state) })
+			miniBtns[i] = widget.NewButtonWithIcon("", dotResource(c.state),
+				func() { agent.SetOverride(c.state) })
+			miniHints[i] = canvas.NewText(shortcutHint(i), theme.Color(theme.ColorNameDisabled))
+			miniHints[i].TextSize = 10
+			miniHints[i].Alignment = fyne.TextAlignCenter
 			key := fyne.KeyName('0' + rune(i))
 			w.Canvas().AddShortcut(
 				&desktop.CustomShortcut{KeyName: key, Modifier: fyne.KeyModifierShortcutDefault},
@@ -366,7 +377,6 @@ func main() {
 	emojiBtn := widget.NewButtonWithIcon("",
 		fyne.NewStaticResource("smile.png", emoji.PNG("smile")),
 		func() { showEmojiPicker(a, agent, setBusy, func(res fyne.Resource) { lastEmoji = res }) })
-	customRow := container.NewBorder(nil, nil, nil, container.NewHBox(paletteBtn, pinBtn, customBtn, emojiBtn), customEntry)
 
 	fwLbl := widget.NewLabel("Firmware: ...")
 	fwLbl.Importance = widget.LowImportance
@@ -654,27 +664,25 @@ func main() {
 		desk.SetSystemTrayIcon(dotResource("off"))
 	}
 
+	var fitWindow func() // assigned with the layouts below
 	setBusy = func(on bool) {
 		widgets := []fyne.Disableable{customEntry, customBtn, emojiBtn, fwBtn}
+		for _, b := range append(slices.Clone(btns), miniBtns...) {
+			widgets = append(widgets, b)
+		}
 		if on {
 			busyBar.Show()
 			busyBar.Start()
-			for _, b := range btns {
-				b.Disable()
-			}
 			for _, x := range widgets {
 				x.Disable()
 			}
 		} else {
 			busyBar.Stop()
 			busyBar.Hide()
-			for _, b := range btns {
-				b.Enable()
-			}
 			for _, x := range widgets {
 				x.Enable()
 			}
-			w.Resize(fyne.NewSize(260, 0)) // the hidden bar leaves the window tall
+			fitWindow() // the hidden bar leaves the window tall
 		}
 	}
 
@@ -728,13 +736,33 @@ func main() {
 			// highlight the live state too: ringed dot + check, so in Auto
 			// the menu still shows what the light is doing right now
 			live := c.state != "" && c.state == shownKey
-			if c.state != "" {
+			if c.state == "" {
+				if miniBtns[i].Importance != want {
+					miniBtns[i].Importance = want
+					miniBtns[i].Refresh()
+				}
+			} else {
 				icon := dotResource(c.state)
 				if live {
 					icon = activeDotResource(c.state)
 				}
 				if stateItems[i].Icon != icon {
 					stateItems[i].Icon = icon
+				}
+				// compact: a green button would swallow the green dot, so the
+				// ringed dot marks what shows and the shortcut lights up for
+				// a state picked by hand
+				if miniBtns[i].Icon != icon {
+					miniBtns[i].SetIcon(icon)
+				}
+				hint := theme.Color(theme.ColorNameDisabled)
+				if want == widget.HighImportance {
+					hint = theme.Color(theme.ColorNamePrimary)
+				}
+				if miniHints[i].Color != hint {
+					miniHints[i].Color = hint
+					miniHints[i].TextStyle.Bold = want == widget.HighImportance
+					miniHints[i].Refresh()
 				}
 			}
 			checked := want == widget.HighImportance || live
@@ -847,9 +875,17 @@ func main() {
 	// grow and shrink, and any pop-up opened near the bottom of the short
 	// window had nowhere to unfold into (Fyne clips pop-ups to the canvas).
 	// Built once and hidden on close so update() keeps its widget pointers.
+	var setCompact func(bool) // assigned with the layouts below
+	viewRadio := widget.NewRadioGroup([]string{"Large", "Compact"}, func(s string) {
+		if s != "" {
+			setCompact(s == "Compact")
+		}
+	})
+	viewRadio.Horizontal = true
 	settingsWin := a.NewWindow("onIT Settings")
 	settingsWin.SetContent(container.NewVBox(
-		fwLbl, fwBtn, graphSetupBtn, remoteCheck, micCheck, clockCheck, betaCheck, verboseCheck, loginCheck))
+		fwLbl, fwBtn, graphSetupBtn, remoteCheck, micCheck, clockCheck, betaCheck, verboseCheck, loginCheck,
+		widget.NewSeparator(), container.NewHBox(widget.NewLabel("Window"), viewRadio)))
 	settingsWin.SetCloseIntercept(settingsWin.Hide)
 	settingsWin.Resize(fyne.NewSize(300, 0))
 	showSettings = func() { settingsWin.Show(); settingsWin.RequestFocus() }
@@ -872,22 +908,164 @@ func main() {
 	})
 	helpBtn.Importance = widget.LowImportance
 
-	w.SetContent(container.NewStack(
-		container.NewVBox(
-			header,
-			widget.NewSeparator(),
-			btns[0], // Auto (Teams)
-			grid,
-			customRow,
-			widget.NewSeparator(),
-			settingsBtn,
-		),
-		container.NewBorder( // floats over the face's empty corners
-			container.NewHBox(helpBtn, layout.NewSpacer(),
-				container.NewPadded(bleIcon)), nil, nil, nil, nil),
-	))
+	// Two layouts over the same controls: the large window, and a compact
+	// one that keeps a smaller face, shows the states as dots with their
+	// shortcut, and tucks the message and emoji controls into drawers that
+	// slide out from a strip of tabs. The shared widgets move between them,
+	// so each layout is rebuilt when it is shown.
+	compact := prefs.Bool(compactViewKey)
+	viewBtn := widget.NewButtonWithIcon("Compact", theme.ViewRestoreIcon(), func() { setCompact(true) })
+	viewBtn.Importance = widget.LowImportance
 
-	w.Resize(fyne.NewSize(260, 0)) // height from content; keep it compact
+	largeContent := func() fyne.CanvasObject {
+		customRow := container.NewBorder(nil, nil, nil,
+			container.NewHBox(paletteBtn, pinBtn, customBtn, emojiBtn), customEntry)
+		return container.NewStack(
+			container.NewVBox(
+				container.NewCenter(spinFace),
+				busyBar,
+				widget.NewSeparator(),
+				btns[0], // Auto (Teams)
+				grid,
+				customRow,
+				widget.NewSeparator(),
+				container.NewHBox(settingsBtn, layout.NewSpacer(), viewBtn),
+			),
+			container.NewBorder( // floats over the face's empty corners
+				container.NewHBox(helpBtn, layout.NewSpacer(),
+					container.NewPadded(bleIcon)), nil, nil, nil, nil),
+		)
+	}
+
+	// compact drawers: one open at a time, sliding out to the right of the
+	// tab strip; tapping the open drawer's tab tucks it away again
+	drawer := container.NewHBox()
+	openDrawer := ""
+	var msgTab, emojiTab *widget.Button
+	// drawerPanel gives a drawer a steady width, so the entry has room to type
+	drawerPanel := func(content fyne.CanvasObject) fyne.CanvasObject {
+		strut := canvas.NewRectangle(color.Transparent)
+		strut.SetMinSize(fyne.NewSize(200, 0))
+		return container.NewStack(strut, content)
+	}
+	var toggleDrawer func(name string)
+	messageDrawer := func() fyne.CanvasObject {
+		// the latest messages sit ready to tap; the drop-down has the rest
+		quick := container.NewVBox()
+		for i, o := range options() {
+			if i == 3 {
+				break
+			}
+			b := widget.NewButton(o, func() { customEntry.SetText(o) }) // OnChanged applies it
+			b.Alignment = widget.ButtonAlignLeading
+			b.Importance = widget.LowImportance
+			quick.Add(b)
+		}
+		return container.NewVBox(customEntry,
+			container.NewHBox(paletteBtn, pinBtn, layout.NewSpacer(), customBtn), quick)
+	}
+	emojiDrawer := func() fyne.CanvasObject {
+		grid := container.NewGridWithColumns(4)
+		for _, slug := range topEmojiSlugs(prefs.StringList(emojiUsageKey), 8) {
+			e, ok := emojiBySlug[slug]
+			if !ok {
+				continue
+			}
+			grid.Add(newEmojiCell(emojiRes(e), func() {
+				toggleDrawer("") // sent: slide the drawer back in
+				sendEmojiNow(a, agent, setBusy, func(res fyne.Resource) { lastEmoji = res }, e)
+			}))
+		}
+		more := widget.NewButtonWithIcon("More...", theme.MoreHorizontalIcon(), func() {
+			showEmojiPicker(a, agent, setBusy, func(res fyne.Resource) { lastEmoji = res })
+		})
+		more.Importance = widget.LowImportance
+		return container.NewVBox(grid, more)
+	}
+	toggleDrawer = func(name string) {
+		if name == openDrawer {
+			name = ""
+		}
+		openDrawer = name
+		msgTab.Importance, emojiTab.Importance = widget.LowImportance, widget.LowImportance
+		switch name {
+		case "message":
+			drawer.Objects = []fyne.CanvasObject{widget.NewSeparator(), drawerPanel(messageDrawer())}
+			msgTab.Importance = widget.HighImportance
+		case "emoji":
+			drawer.Objects = []fyne.CanvasObject{widget.NewSeparator(), drawerPanel(emojiDrawer())}
+			emojiTab.Importance = widget.HighImportance
+		default:
+			drawer.Objects = nil
+		}
+		msgTab.Refresh()
+		emojiTab.Refresh()
+		drawer.Refresh()
+		fitWindow()
+		if name == "message" {
+			w.Canvas().Focus(customEntry)
+		}
+	}
+	msgTab = widget.NewButtonWithIcon("", theme.MailComposeIcon(), func() { toggleDrawer("message") })
+	emojiTab = widget.NewButtonWithIcon("", emojiBtn.Icon, func() { toggleDrawer("emoji") })
+	settingsTab := widget.NewButtonWithIcon("", theme.SettingsIcon(), func() { showSettings() })
+	largeTab := widget.NewButtonWithIcon("", theme.ViewFullScreenIcon(), func() { setCompact(false) })
+	for _, b := range []*widget.Button{msgTab, emojiTab, settingsTab, largeTab} {
+		b.Importance = widget.LowImportance
+	}
+
+	compactContent := func() fyne.CanvasObject {
+		states := container.NewGridWithColumns(len(choices) - 1)
+		for i := 1; i < len(choices); i++ {
+			states.Add(container.NewVBox(miniBtns[i], miniHints[i]))
+		}
+		main := container.NewVBox(
+			container.NewStack(
+				container.NewCenter(miniSpinFace),
+				container.NewBorder( // the link indicator rides the face's corner
+					container.NewHBox(layout.NewSpacer(), bleIcon), nil, nil, nil, nil)),
+			busyBar,
+			states,
+			miniBtns[0], // Auto (Teams)
+		)
+		tabs := container.NewVBox(msgTab, emojiTab, settingsTab, largeTab, layout.NewSpacer(), helpBtn)
+		return container.NewHBox(main, widget.NewSeparator(), tabs, drawer)
+	}
+
+	fitWindow = func() {
+		if compact {
+			w.Resize(fyne.NewSize(0, 0)) // as small as the content allows
+		} else {
+			w.Resize(fyne.NewSize(260, 0)) // height from content; keep it compact
+		}
+	}
+	// the tray offers the same choice, ticked while the window is compact
+	compactItem := fyne.NewMenuItem("Compact window", nil)
+	showView := func() {
+		if compact {
+			w.SetContent(compactContent())
+			viewRadio.SetSelected("Compact")
+		} else {
+			toggleDrawer("") // closed drawers are where the next compact view starts
+			w.SetContent(largeContent())
+			viewRadio.SetSelected("Large")
+		}
+		compactItem.Checked = compact
+		trayMenu.Refresh()
+		fitWindow()
+	}
+	setCompact = func(on bool) {
+		if on == compact {
+			return
+		}
+		compact = on
+		prefs.SetBool(compactViewKey, on)
+		showView()
+	}
+	compactItem.Action = func() { setCompact(!compact) }
+	menuTail = slices.Insert(menuTail, 1, compactItem)
+	rebuildTray(agent.Status())
+	showView()
 
 	// Remember where the window was left. Fyne has no position API, so this
 	// goes through AppKit (see winpos_darwin.m) and is macOS-only. The

@@ -35,7 +35,7 @@ func TestCaptureFaces(t *testing.T) {
 		"emoji":     "emoji",
 	}
 	for name, shown := range states {
-		f := newDeviceFace()
+		f := newDeviceFace(faceSize)
 		f.Set(shown, fyne.NewStaticResource("heart.png", emoji.PNG("heart")))
 		img := software.Render(f.root, onitTheme{base: theme.DefaultTheme()})
 		out, err := os.Create(filepath.Join(*captureDir, name+".png"))

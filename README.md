@@ -78,6 +78,7 @@ also has:
 |---|---|
 | **Pair busylight…** | scan for the device over Bluetooth (hidden while it's already connected that way) |
 | **Spin the wheel** | run the emoji roulette |
+| **Compact window** | switch the control window between large and compact (also in Settings, and the window's own **Compact** / expand buttons) |
 | **Settings…** | firmware updates, presence setup, remote presence, the mic rule, beta updates, verbose logging, start at login |
 | **Show log…** | follow onIT's log live, with Copy and Reveal buttons |
 | **Check for updates…** | |
@@ -85,6 +86,13 @@ also has:
 
 Manual states override Teams until you click **Auto (Teams)**; the app
 returns to Auto on restart.
+
+The **compact window** takes a fraction of the desk: a smaller face, the
+states as bare dots with their shortcut beneath (⌘1–⌘4), and **Auto**. A
+strip of tabs down the side slides out the message drawer (the entry, colors,
+pin and your latest messages) or the emoji drawer (your most-sent emojis,
+plus **More…** for the full picker); tap the tab again to tuck it away. The
+choice is remembered across launches.
 
 ## Standalone mode
 
