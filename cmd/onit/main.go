@@ -169,7 +169,6 @@ func main() {
 			}
 		}()
 	})
-	header := container.NewVBox(container.NewCenter(spinFace), busyBar)
 
 	// one choice list drives both the window buttons and the tray menu
 	type choice struct{ label, state string }
@@ -551,7 +550,7 @@ func main() {
 		}
 		log.Print("graph signed back in silently")
 	})
-	signInItem := fyne.NewMenuItem("Sign in to Microsoft...", func() {
+	signIn := func() {
 		id, ten := graphApp(a)
 		bl, err := busylight.StartBrowserLoginPrompt(id, ten, "select_account")
 		if err != nil {
@@ -568,7 +567,12 @@ func main() {
 				log.Printf("graph sign-in: %v", err)
 			}
 		}()
-	})
+	}
+	signInItem := fyne.NewMenuItem("Sign in to Microsoft...", signIn)
+	// the same sign-in from the face's bottom-right corner; it lights up
+	// while a sign-in is needed
+	signInBtn := widget.NewButtonWithIcon("", theme.LoginIcon(), signIn)
+	signInBtn.Importance = widget.LowImportance
 	trayMenu := fyne.NewMenu("onIT")
 	rebuildTray := func(st busylight.Status) {
 		switch st.Transport {
@@ -692,8 +696,14 @@ func main() {
 		case st.TeamsConnected:
 			src = "Teams local API"
 		}
+		wantSignIn := widget.LowImportance
 		if st.SignInNeeded != "" {
 			src += " - Microsoft sign-in needed"
+			wantSignIn = widget.HighImportance
+		}
+		if signInBtn.Importance != wantSignIn {
+			signInBtn.Importance = wantSignIn
+			signInBtn.Refresh()
 		}
 		light := "light connected"
 		if !st.LightConnected {
@@ -872,6 +882,11 @@ func main() {
 		widget.NewSeparator(),
 		settingsBtn,
 	)
+	// the sign-in button sits over the face's bottom-right corner, bounded to
+	// the face so it stays there however wide the window is
+	faceWithSignIn := container.NewStack(spinFace,
+		container.NewBorder(nil, container.NewHBox(layout.NewSpacer(), signInBtn), nil, nil))
+	header := container.NewVBox(container.NewCenter(faceWithSignIn), busyBar)
 	w.SetContent(container.NewStack(
 		container.NewVBox(header, controls),
 		container.NewBorder( // floats over the face's empty corners

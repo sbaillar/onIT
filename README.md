@@ -73,7 +73,9 @@ The onIT dot lives in the menu bar: it mirrors the light's state and the menu
 sets states directly. "Open onIT" shows the control window — Auto and manual
 state buttons, a custom message, emoji, and the connection status. The
 arrows button in its top-right corner shrinks it to just the device face (click
-the face to spin); click it again to get the controls back. The menu also has:
+the face to spin); click it again to get the controls back. The button in the face's bottom-right
+corner signs in to Microsoft in the browser; it lights up when a sign-in is
+needed. The menu also has:
 
 | Item | |
 |---|---|
