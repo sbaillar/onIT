@@ -1,6 +1,6 @@
 APP     := onIT
 ID      := casa.baillargeon.onit
-VERSION := 3.0.4
+VERSION := 3.1.0
 DIST    := dist
 FYNE    := go run fyne.io/tools/cmd/fyne@v1.7.2
 GOFLAGS := -trimpath -ldflags "-s -w"
