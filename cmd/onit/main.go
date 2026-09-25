@@ -17,7 +17,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
@@ -159,11 +158,6 @@ func main() {
 	// presence source / light status: a dimmed line at the top of the ? menu
 	statusItem := fyne.NewMenuItem("starting...", nil)
 	statusItem.Disabled = true
-	// Bluetooth indicator (floated top-right below): lit while the BLE link
-	// is carrying the device, dim otherwise. Runic berkanan is the glyph.
-	bleIcon := canvas.NewText("ᛒ", bleIconDim)
-	bleIcon.TextSize = 18
-	bleIcon.TextStyle = fyne.TextStyle{Bold: true}
 	busyBar := widget.NewProgressBarInfinite()
 	busyBar.Stop()
 	busyBar.Hide()
@@ -707,15 +701,6 @@ func main() {
 		}
 		statusItem.Label = src + "  /  " + light
 
-		wantBLE := bleIconDim
-		if st.Transport == "ble" {
-			wantBLE = bleIconLit
-		}
-		if bleIcon.Color != wantBLE {
-			bleIcon.Color = wantBLE
-			bleIcon.Refresh()
-		}
-
 		shownKey := stateKey(st.Shown)
 		for i, c := range choices {
 			want := widget.MediumImportance
@@ -858,15 +843,16 @@ func main() {
 	settingsBtn := widget.NewButtonWithIcon("Settings", theme.SettingsIcon(), showSettings)
 	settingsBtn.Alignment = widget.ButtonAlignLeading
 	settingsBtn.Importance = widget.LowImportance
-	// compact: the window shrinks to the device face alone; the tray and
-	// this menu still reach everything the hidden controls did
+	// compact: the window shrinks to the device face alone; the tray still
+	// reaches everything the hidden controls did. The top-right button
+	// toggles it, showing the shrink or expand arrows for where it goes next.
 	var setCompact func(bool)
-	compactItem := fyne.NewMenuItem("Compact window", func() { setCompact(!prefs.Bool(compactKey)) })
+	sizeBtn := widget.NewButtonWithIcon("", theme.ViewRestoreIcon(), func() { setCompact(!prefs.Bool(compactKey)) })
+	sizeBtn.Importance = widget.LowImportance
 	// help menu in the top-left corner (an LSUIElement app has no menu bar)
 	helpMenu := fyne.NewMenu("",
 		statusItem,
 		fyne.NewMenuItemSeparator(),
-		compactItem,
 		fyne.NewMenuItem("Check for updates...", func() { checkForUpdates(w, prefs.Bool(betaKey)) }),
 		fyne.NewMenuItem("About onIT...", func() { showAbout(a) }),
 	)
@@ -889,8 +875,7 @@ func main() {
 	w.SetContent(container.NewStack(
 		container.NewVBox(header, controls),
 		container.NewBorder( // floats over the face's empty corners
-			container.NewHBox(helpBtn, layout.NewSpacer(),
-				container.NewPadded(bleIcon)), nil, nil, nil, nil),
+			container.NewHBox(helpBtn, layout.NewSpacer(), sizeBtn), nil, nil, nil, nil),
 	))
 
 	// height from content; width 0 lets the compact window hug the face
@@ -903,11 +888,12 @@ func main() {
 	}
 	setCompact = func(on bool) {
 		prefs.SetBool(compactKey, on)
-		compactItem.Checked = on
 		if on {
 			controls.Hide()
+			sizeBtn.SetIcon(theme.ViewFullScreenIcon())
 		} else {
 			controls.Show()
+			sizeBtn.SetIcon(theme.ViewRestoreIcon())
 		}
 		fitWindow()
 	}
