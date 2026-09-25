@@ -654,6 +654,7 @@ func main() {
 		desk.SetSystemTrayIcon(dotResource("off"))
 	}
 
+	var fitWindow func() // assigned once the window content exists
 	setBusy = func(on bool) {
 		widgets := []fyne.Disableable{customEntry, customBtn, emojiBtn, fwBtn}
 		if on {
@@ -674,7 +675,7 @@ func main() {
 			for _, x := range widgets {
 				x.Enable()
 			}
-			w.Resize(fyne.NewSize(260, 0)) // the hidden bar leaves the window tall
+			fitWindow() // the hidden bar leaves the window tall
 		}
 	}
 
@@ -857,10 +858,15 @@ func main() {
 	settingsBtn := widget.NewButtonWithIcon("Settings", theme.SettingsIcon(), showSettings)
 	settingsBtn.Alignment = widget.ButtonAlignLeading
 	settingsBtn.Importance = widget.LowImportance
+	// compact: the window shrinks to the device face alone; the tray and
+	// this menu still reach everything the hidden controls did
+	var setCompact func(bool)
+	compactItem := fyne.NewMenuItem("Compact window", func() { setCompact(!prefs.Bool(compactKey)) })
 	// help menu in the top-left corner (an LSUIElement app has no menu bar)
 	helpMenu := fyne.NewMenu("",
 		statusItem,
 		fyne.NewMenuItemSeparator(),
+		compactItem,
 		fyne.NewMenuItem("Check for updates...", func() { checkForUpdates(w, prefs.Bool(betaKey)) }),
 		fyne.NewMenuItem("About onIT...", func() { showAbout(a) }),
 	)
@@ -872,22 +878,40 @@ func main() {
 	})
 	helpBtn.Importance = widget.LowImportance
 
+	controls := container.NewVBox(
+		widget.NewSeparator(),
+		btns[0], // Auto (Teams)
+		grid,
+		customRow,
+		widget.NewSeparator(),
+		settingsBtn,
+	)
 	w.SetContent(container.NewStack(
-		container.NewVBox(
-			header,
-			widget.NewSeparator(),
-			btns[0], // Auto (Teams)
-			grid,
-			customRow,
-			widget.NewSeparator(),
-			settingsBtn,
-		),
+		container.NewVBox(header, controls),
 		container.NewBorder( // floats over the face's empty corners
 			container.NewHBox(helpBtn, layout.NewSpacer(),
 				container.NewPadded(bleIcon)), nil, nil, nil, nil),
 	))
 
-	w.Resize(fyne.NewSize(260, 0)) // height from content; keep it compact
+	// height from content; width 0 lets the compact window hug the face
+	fitWindow = func() {
+		width := float32(260)
+		if prefs.Bool(compactKey) {
+			width = 0
+		}
+		w.Resize(fyne.NewSize(width, 0))
+	}
+	setCompact = func(on bool) {
+		prefs.SetBool(compactKey, on)
+		compactItem.Checked = on
+		if on {
+			controls.Hide()
+		} else {
+			controls.Show()
+		}
+		fitWindow()
+	}
+	setCompact(prefs.Bool(compactKey))
 
 	// Remember where the window was left. Fyne has no position API, so this
 	// goes through AppKit (see winpos_darwin.m) and is macOS-only. The

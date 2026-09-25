@@ -71,8 +71,9 @@ terminal instead — it downloads the latest release and runs the installer:
 
 The onIT dot lives in the menu bar: it mirrors the light's state and the menu
 sets states directly. "Open onIT" shows the control window — Auto and manual
-state buttons, a custom message, emoji, and the connection status. The menu
-also has:
+state buttons, a custom message, emoji, and the connection status. **Compact
+window** in its `?` menu shrinks it to just the device face (click it to spin);
+untick it to get the controls back. The menu also has:
 
 | Item | |
 |---|---|
