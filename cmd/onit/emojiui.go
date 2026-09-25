@@ -43,6 +43,8 @@ const (
 	winPosYKey = "winPosY"
 	// white clock face instead of the dark one
 	whiteClockKey = "whiteClock"
+	// main window shows only the device face
+	compactKey = "compactWindow"
 )
 
 // pushHistory prepends text to the sent-message history: newest first,

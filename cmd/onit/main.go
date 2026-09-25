@@ -17,7 +17,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
@@ -159,11 +158,6 @@ func main() {
 	// presence source / light status: a dimmed line at the top of the ? menu
 	statusItem := fyne.NewMenuItem("starting...", nil)
 	statusItem.Disabled = true
-	// Bluetooth indicator (floated top-right below): lit while the BLE link
-	// is carrying the device, dim otherwise. Runic berkanan is the glyph.
-	bleIcon := canvas.NewText("ᛒ", bleIconDim)
-	bleIcon.TextSize = 18
-	bleIcon.TextStyle = fyne.TextStyle{Bold: true}
 	busyBar := widget.NewProgressBarInfinite()
 	busyBar.Stop()
 	busyBar.Hide()
@@ -175,7 +169,6 @@ func main() {
 			}
 		}()
 	})
-	header := container.NewVBox(container.NewCenter(spinFace), busyBar)
 
 	// one choice list drives both the window buttons and the tray menu
 	type choice struct{ label, state string }
@@ -557,7 +550,7 @@ func main() {
 		}
 		log.Print("graph signed back in silently")
 	})
-	signInItem := fyne.NewMenuItem("Sign in to Microsoft...", func() {
+	signIn := func() {
 		id, ten := graphApp(a)
 		bl, err := busylight.StartBrowserLoginPrompt(id, ten, "select_account")
 		if err != nil {
@@ -574,7 +567,12 @@ func main() {
 				log.Printf("graph sign-in: %v", err)
 			}
 		}()
-	})
+	}
+	signInItem := fyne.NewMenuItem("Sign in to Microsoft...", signIn)
+	// the same sign-in from the face's bottom-right corner; it lights up
+	// while a sign-in is needed
+	signInBtn := widget.NewButtonWithIcon("", theme.LoginIcon(), signIn)
+	signInBtn.Importance = widget.LowImportance
 	trayMenu := fyne.NewMenu("onIT")
 	rebuildTray := func(st busylight.Status) {
 		switch st.Transport {
@@ -654,6 +652,7 @@ func main() {
 		desk.SetSystemTrayIcon(dotResource("off"))
 	}
 
+	var fitWindow func() // assigned once the window content exists
 	setBusy = func(on bool) {
 		widgets := []fyne.Disableable{customEntry, customBtn, emojiBtn, fwBtn}
 		if on {
@@ -674,7 +673,7 @@ func main() {
 			for _, x := range widgets {
 				x.Enable()
 			}
-			w.Resize(fyne.NewSize(260, 0)) // the hidden bar leaves the window tall
+			fitWindow() // the hidden bar leaves the window tall
 		}
 	}
 
@@ -697,23 +696,20 @@ func main() {
 		case st.TeamsConnected:
 			src = "Teams local API"
 		}
+		wantSignIn := widget.LowImportance
 		if st.SignInNeeded != "" {
 			src += " - Microsoft sign-in needed"
+			wantSignIn = widget.HighImportance
+		}
+		if signInBtn.Importance != wantSignIn {
+			signInBtn.Importance = wantSignIn
+			signInBtn.Refresh()
 		}
 		light := "light connected"
 		if !st.LightConnected {
 			light = "light not found"
 		}
 		statusItem.Label = src + "  /  " + light
-
-		wantBLE := bleIconDim
-		if st.Transport == "ble" {
-			wantBLE = bleIconLit
-		}
-		if bleIcon.Color != wantBLE {
-			bleIcon.Color = wantBLE
-			bleIcon.Refresh()
-		}
 
 		shownKey := stateKey(st.Shown)
 		for i, c := range choices {
@@ -857,6 +853,12 @@ func main() {
 	settingsBtn := widget.NewButtonWithIcon("Settings", theme.SettingsIcon(), showSettings)
 	settingsBtn.Alignment = widget.ButtonAlignLeading
 	settingsBtn.Importance = widget.LowImportance
+	// compact: the window shrinks to the device face alone; the tray still
+	// reaches everything the hidden controls did. The top-right button
+	// toggles it, showing the shrink or expand arrows for where it goes next.
+	var setCompact func(bool)
+	sizeBtn := widget.NewButtonWithIcon("", theme.ViewRestoreIcon(), func() { setCompact(!prefs.Bool(compactKey)) })
+	sizeBtn.Importance = widget.LowImportance
 	// help menu in the top-left corner (an LSUIElement app has no menu bar)
 	helpMenu := fyne.NewMenu("",
 		statusItem,
@@ -872,22 +874,45 @@ func main() {
 	})
 	helpBtn.Importance = widget.LowImportance
 
+	controls := container.NewVBox(
+		widget.NewSeparator(),
+		btns[0], // Auto (Teams)
+		grid,
+		customRow,
+		widget.NewSeparator(),
+		settingsBtn,
+	)
+	// the sign-in button sits over the face's bottom-right corner, bounded to
+	// the face so it stays there however wide the window is
+	faceWithSignIn := container.NewStack(spinFace,
+		container.NewBorder(nil, container.NewHBox(layout.NewSpacer(), signInBtn), nil, nil))
+	header := container.NewVBox(container.NewCenter(faceWithSignIn), busyBar)
 	w.SetContent(container.NewStack(
-		container.NewVBox(
-			header,
-			widget.NewSeparator(),
-			btns[0], // Auto (Teams)
-			grid,
-			customRow,
-			widget.NewSeparator(),
-			settingsBtn,
-		),
+		container.NewVBox(header, controls),
 		container.NewBorder( // floats over the face's empty corners
-			container.NewHBox(helpBtn, layout.NewSpacer(),
-				container.NewPadded(bleIcon)), nil, nil, nil, nil),
+			container.NewHBox(helpBtn, layout.NewSpacer(), sizeBtn), nil, nil, nil, nil),
 	))
 
-	w.Resize(fyne.NewSize(260, 0)) // height from content; keep it compact
+	// height from content; width 0 lets the compact window hug the face
+	fitWindow = func() {
+		width := float32(260)
+		if prefs.Bool(compactKey) {
+			width = 0
+		}
+		w.Resize(fyne.NewSize(width, 0))
+	}
+	setCompact = func(on bool) {
+		prefs.SetBool(compactKey, on)
+		if on {
+			controls.Hide()
+			sizeBtn.SetIcon(theme.ViewFullScreenIcon())
+		} else {
+			controls.Show()
+			sizeBtn.SetIcon(theme.ViewRestoreIcon())
+		}
+		fitWindow()
+	}
+	setCompact(prefs.Bool(compactKey))
 
 	// Remember where the window was left. Fyne has no position API, so this
 	// goes through AppKit (see winpos_darwin.m) and is macOS-only. The
