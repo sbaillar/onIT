@@ -9,36 +9,44 @@
 
 // onitWindowOrigin writes the bottom-left corner of the window with this
 // title into x/y and returns 1 when it found one.
+//
+// Both run inside their own autorelease pool: the strings and window list
+// they touch are autoreleased, and a poll every few seconds would otherwise
+// pile them up wherever no outer pool drains them.
 int onitWindowOrigin(const char *title, double *x, double *y) {
-	NSString *want = [NSString stringWithUTF8String:title];
-	for (NSWindow *w in [NSApp windows]) {
-		if ([[w title] isEqualToString:want]) {
-			NSRect f = [w frame];
-			*x = f.origin.x;
-			*y = f.origin.y;
-			return 1;
+	@autoreleasepool {
+		NSString *want = [NSString stringWithUTF8String:title];
+		for (NSWindow *w in [NSApp windows]) {
+			if ([[w title] isEqualToString:want]) {
+				NSRect f = [w frame];
+				*x = f.origin.x;
+				*y = f.origin.y;
+				return 1;
+			}
 		}
+		return 0;
 	}
-	return 0;
 }
 
 // onitSetWindowOrigin moves the window, but only if the target still lands on
 // an attached screen — a position saved on a monitor since unplugged would
 // otherwise put the window out of reach.
 int onitSetWindowOrigin(const char *title, double x, double y) {
-	NSString *want = [NSString stringWithUTF8String:title];
-	for (NSWindow *w in [NSApp windows]) {
-		if ([[w title] isEqualToString:want]) {
-			NSRect f = [w frame];
-			NSRect target = NSMakeRect(x, y, f.size.width, f.size.height);
-			for (NSScreen *s in [NSScreen screens]) {
-				if (NSIntersectsRect([s visibleFrame], target)) {
-					[w setFrameOrigin:NSMakePoint(x, y)];
-					return 1;
+	@autoreleasepool {
+		NSString *want = [NSString stringWithUTF8String:title];
+		for (NSWindow *w in [NSApp windows]) {
+			if ([[w title] isEqualToString:want]) {
+				NSRect f = [w frame];
+				NSRect target = NSMakeRect(x, y, f.size.width, f.size.height);
+				for (NSScreen *s in [NSScreen screens]) {
+					if (NSIntersectsRect([s visibleFrame], target)) {
+						[w setFrameOrigin:NSMakePoint(x, y)];
+						return 1;
+					}
 				}
+				return 0;
 			}
-			return 0;
 		}
+		return 0;
 	}
-	return 0;
 }

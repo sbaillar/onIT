@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"onit/internal/busylight"
@@ -40,14 +41,41 @@ func widgetStateJSON(st busylight.Status, now time.Time) ([]byte, error) {
 	}, "", "  ")
 }
 
+// what the widget renders, to skip snapshots that would not change it
+type widgetShown struct {
+	key       string
+	connected bool
+}
+
+// the widget reads a snapshot older than 30 minutes as "app gone", so an
+// unchanged one is still rewritten this often
+const widgetRefresh = 10 * time.Minute
+
+var (
+	widgetMu   sync.Mutex // OnChange fires from several agent goroutines
+	widgetLast widgetShown
+	widgetAt   time.Time
+)
+
 // writeWidgetState snapshots the status for the widget and pokes WidgetKit
-// to re-render. Failures only log: the widget is a passenger, never a
-// reason the app stumbles.
+// to re-render. Statuses churn in ways the widget never shows (the presence
+// source flaps on each retry while Teams is down), and every write spawns
+// the reload helper, so only a change to what it renders is written, or
+// a snapshot about to go stale.
+// Failures only log: the widget is a passenger, never a reason the app
+// stumbles.
 func writeWidgetState(st busylight.Status) {
+	shown := widgetShown{stateKey(st.Shown), st.LightConnected}
+	widgetMu.Lock()
+	defer widgetMu.Unlock()
+	if shown == widgetLast && time.Since(widgetAt) < widgetRefresh {
+		return
+	}
 	if err := writeWidgetStateFile(st); err != nil {
 		log.Printf("widget state: %v", err)
 		return
 	}
+	widgetLast, widgetAt = shown, time.Now()
 	go reloadWidget()
 }
 

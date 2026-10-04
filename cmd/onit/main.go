@@ -678,6 +678,7 @@ func main() {
 	}
 
 	lastShown := ""
+	lastTraySig := ""
 	flashing := false
 	update = func() {
 		st := agent.Status()
@@ -740,7 +741,13 @@ func main() {
 		}
 		rebuildTray(st)        // transport/bond state may have changed
 		refreshTrayShortcuts() // usage/history may have changed
-		trayMenu.Refresh()
+		// A refresh rebuilds every native menu item and fyne's systray never
+		// frees the old ones, and statuses churn (the presence source flaps
+		// on each retry while Teams is down) - so only when the menu changed.
+		if sig := traySig(trayMenu.Items); sig != lastTraySig {
+			lastTraySig = sig
+			trayMenu.Refresh()
+		}
 
 		if !flashing {
 			switch {
@@ -776,6 +783,12 @@ func main() {
 		fyne.Do(update)
 	})
 	writeWidgetState(agent.Status()) // and seed it at startup
+	// and keep it from aging out while nothing changes
+	go func() {
+		for range time.Tick(widgetRefresh) {
+			writeWidgetState(agent.Status())
+		}
+	}()
 
 	// the widget's tap opens onit://open; when the app is already running
 	// that lands here — same behavior as the tray's "Open onIT"
@@ -929,17 +942,17 @@ func main() {
 	// Poll rather than saving on close or quit: a menu-bar app is as likely
 	// to be force-quit or killed as closed cleanly, and either would lose the
 	// position. An AppKit frame read is cheap, and the write only happens
-	// when it has actually moved.
+	// when it has actually moved. AppKit is main-thread only, hence fyne.Do.
 	go func() {
 		var lastX, lastY float64
 		for {
 			time.Sleep(2 * time.Second)
-			x, y, ok := windowOrigin(windowTitle)
-			if !ok || (x == lastX && y == lastY) {
-				continue
-			}
-			lastX, lastY = x, y
 			fyne.Do(func() {
+				x, y, ok := windowOrigin(windowTitle)
+				if !ok || (x == lastX && y == lastY) {
+					return
+				}
+				lastX, lastY = x, y
 				prefs.SetFloat(winPosXKey, x)
 				prefs.SetFloat(winPosYKey, y)
 			})
@@ -962,11 +975,7 @@ func main() {
 	go func() {
 		for {
 			time.Sleep(time.Second)
-			fyne.Do(func() {
-				if agent.Status().Shown == "off" {
-					face.Set("off", lastEmoji)
-				}
-			})
+			fyne.Do(func() { face.Tick(time.Now()) })
 		}
 	}()
 
@@ -982,4 +991,22 @@ func main() {
 	} else {
 		w.ShowAndRun()
 	}
+}
+
+// traySig fingerprints what the tray menu shows, so update can tell whether
+// a native refresh is needed. Items are compared by content, not pointer:
+// the shortcut submenus are rebuilt from fresh items every time.
+func traySig(items []*fyne.MenuItem) string {
+	var b strings.Builder
+	for _, it := range items {
+		fmt.Fprintf(&b, "%t|%s|%t|%t|", it.IsSeparator, it.Label, it.Checked, it.Disabled)
+		if it.Icon != nil {
+			b.WriteString(it.Icon.Name())
+		}
+		if it.ChildMenu != nil {
+			b.WriteString("{" + traySig(it.ChildMenu.Items) + "}")
+		}
+		b.WriteByte(';')
+	}
+	return b.String()
 }

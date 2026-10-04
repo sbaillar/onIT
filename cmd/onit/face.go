@@ -85,6 +85,7 @@ type deviceFace struct {
 	secH   *canvas.Line
 	hub    *canvas.Circle
 	hubDot *canvas.Circle
+	clock  bool // Set last drew the clock, so Tick has hands to move
 }
 
 func newDeviceFace() *deviceFace {
@@ -184,6 +185,7 @@ func (f *deviceFace) Set(shown string, emojiRes fyne.Resource) {
 		f.hourH, f.minH, f.secH, f.hub, f.hubDot} {
 		o.Hide()
 	}
+	f.clock = false
 	for _, t := range f.ticks {
 		t.Hide()
 	}
@@ -226,6 +228,15 @@ func (f *deviceFace) Set(shown string, emojiRes fyne.Resource) {
 		}
 	default: // off: the standalone clock, the same face the device draws
 		f.setClock(time.Now())
+		f.clock = true
+	}
+}
+
+// Tick moves the clock's hands to now, the only part that changes each
+// second; a no-op unless the clock is what Set last drew.
+func (f *deviceFace) Tick(now time.Time) {
+	if f.clock {
+		f.setHands(now, clockThemeShown == 1)
 	}
 }
 
@@ -280,19 +291,28 @@ func (f *deviceFace) setClock(now time.Time) {
 		}
 	}
 
-	hourCol, minCol, secCol, hubCol := faceWhite, faceLavender, faceGreen, faceLavender
+	f.setHands(now, white)
+	hubCol := faceLavender
 	if white {
-		hourCol, minCol, secCol, hubCol = faceBlack, faceBlack, faceRedSec, faceBlack
+		hubCol = faceBlack
 	}
-	h, m, sec := now.Hour()%12, now.Minute(), now.Second()
-	f.setHand(f.hourH, float64(h)*30+float64(m)*0.5, 54, hourCol)
-	f.setHand(f.minH, float64(m)*6+float64(sec)*0.1, 77, minCol)
-	f.setHand(f.secH, float64(sec)*6, 91, secCol)
 	f.hub.FillColor, f.hubDot.FillColor = hubCol, bg
 	f.hub.Show()
 	f.hubDot.Show()
 	f.hub.Refresh()
 	f.hubDot.Refresh()
+}
+
+// setHands points the three hands at now.
+func (f *deviceFace) setHands(now time.Time, white bool) {
+	hourCol, minCol, secCol := faceWhite, faceLavender, faceGreen
+	if white {
+		hourCol, minCol, secCol = faceBlack, faceBlack, faceRedSec
+	}
+	h, m, sec := now.Hour()%12, now.Minute(), now.Second()
+	f.setHand(f.hourH, float64(h)*30+float64(m)*0.5, 54, hourCol)
+	f.setHand(f.minH, float64(m)*6+float64(sec)*0.1, 77, minCol)
+	f.setHand(f.secH, float64(sec)*6, 91, secCol)
 }
 
 // clockPoint is the screen position of a point at angle deg (0 = 12 o'clock,
