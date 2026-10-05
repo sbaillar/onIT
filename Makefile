@@ -1,6 +1,6 @@
 APP     := onIT
 ID      := casa.baillargeon.onit
-VERSION := 3.2.0
+VERSION := 3.3.0-dev1
 DIST    := dist
 FYNE    := go run fyne.io/tools/cmd/fyne@v1.7.2
 GOFLAGS := -trimpath -ldflags "-s -w"
@@ -98,6 +98,12 @@ app: $(ESPTOOL) widget
 	/usr/libexec/PlistBuddy -c \
 		"Add :NSBluetoothAlwaysUsageDescription string 'onIT connects to your busylight over Bluetooth.'" \
 		$(DIST)/$(APP).app/Contents/Info.plist
+	# meeting recorder: the mic plus a Core Audio tap on call audio; without
+	# these keys macOS denies both without ever asking
+	/usr/libexec/PlistBuddy \
+		-c "Add :NSMicrophoneUsageDescription string 'onIT records your side of Teams meetings for transcription (Settings > Record Teams meetings).'" \
+		-c "Add :NSAudioCaptureUsageDescription string 'onIT records the other people in Teams meetings for transcription (Settings > Record Teams meetings).'" \
+		$(DIST)/$(APP).app/Contents/Info.plist
 	cp $(ESPTOOL) $(DIST)/$(APP).app/Contents/Resources/esptool
 	# the widget extension (WidgetKit appexes are NSExtension plug-ins and
 	# live in Contents/PlugIns) and the reload helper the app execs
@@ -125,7 +131,8 @@ app: $(ESPTOOL) widget
 	codesign --force --options runtime \
 		--entitlements widget/appex.entitlements --sign "$$SIGNER" \
 		$(DIST)/$(APP).app/Contents/PlugIns/$(notdir $(APPEX)) || exit 1; \
-	codesign --force --options runtime --sign "$$SIGNER" \
+	codesign --force --options runtime \
+		--entitlements cmd/onit/onit.entitlements --sign "$$SIGNER" \
 		$(DIST)/$(APP).app || exit 1
 
 # macOS installer: onIT.app + headless CLI in /usr/local/bin

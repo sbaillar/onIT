@@ -128,6 +128,16 @@ func (a *Agent) effectiveLocked() string {
 	return a.teamsState
 }
 
+// InCall reports a Teams meeting, call or presentation with a microphone live
+// in another app: the meeting recorder's trigger. Presence alone isn't enough
+// (a calendar Busy reads as "meeting" too), and manual overrides don't count.
+func (a *Agent) InCall() bool {
+	a.mu.Lock()
+	s := a.teamsState
+	a.mu.Unlock()
+	return (s == "meeting" || s == "sharing") && a.micActive.Load()
+}
+
 func (a *Agent) Status() Status {
 	a.mu.Lock()
 	defer a.mu.Unlock()
