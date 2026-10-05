@@ -857,9 +857,10 @@ func main() {
 	// window had nowhere to unfold into (Fyne clips pop-ups to the canvas).
 	// Built once and hidden on close so update() keeps its widget pointers.
 	transcribeBtn := widget.NewButton("Transcription server...", func() { showTranscriptionSetup(a) })
+	meetRec := newMeetingRecorder(a, agent)
 	settingsWin := a.NewWindow("onIT Settings")
 	settingsWin.SetContent(container.NewVBox(
-		fwLbl, fwBtn, graphSetupBtn, transcribeBtn, remoteCheck, micCheck, clockCheck, betaCheck, verboseCheck, loginCheck))
+		fwLbl, fwBtn, graphSetupBtn, transcribeBtn, meetRec.Check, remoteCheck, micCheck, clockCheck, betaCheck, verboseCheck, loginCheck))
 	settingsWin.SetCloseIntercept(settingsWin.Hide)
 	settingsWin.Resize(fyne.NewSize(300, 0))
 	showSettings = func() { settingsWin.Show(); settingsWin.RequestFocus() }
@@ -896,10 +897,10 @@ func main() {
 		widget.NewSeparator(),
 		settingsBtn,
 	)
-	// the sign-in button sits over the face's bottom-right corner, bounded to
-	// the face so it stays there however wide the window is
+	// the recording dot and the sign-in button sit over the face's bottom
+	// corners, bounded to the face so they stay there however wide the window is
 	faceWithSignIn := container.NewStack(spinFace,
-		container.NewBorder(nil, container.NewHBox(layout.NewSpacer(), signInBtn), nil, nil))
+		container.NewBorder(nil, container.NewHBox(meetRec.Dot, layout.NewSpacer(), signInBtn), nil, nil))
 	header := container.NewVBox(container.NewCenter(faceWithSignIn), busyBar)
 	w.SetContent(container.NewStack(
 		container.NewVBox(header, controls),
@@ -981,6 +982,9 @@ func main() {
 	}()
 
 	go agent.Run()
+	go meetRec.Run()
+	// finish the WAV (header + rename) rather than leave a .part on quit
+	a.Lifecycle().SetOnStopped(meetRec.StopNow)
 
 	// the window has no NSWindow until it is shown, so restore just after
 	go func() {

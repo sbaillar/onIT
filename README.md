@@ -81,7 +81,7 @@ needed. The menu also has:
 |---|---|
 | **Pair busylight…** | scan for the device over Bluetooth (hidden while it's already connected that way) |
 | **Spin the wheel** | run the emoji roulette |
-| **Settings…** | firmware updates, presence setup, transcription server (Whisper URL, model, API key for meeting transcripts; saved to `~/.meetnote/config.json`), remote presence, the mic rule, beta updates, verbose logging, start at login |
+| **Settings…** | firmware updates, presence setup, meeting recording (on by default: while Teams shows a meeting/call and another app has the mic, records your mic + the call audio to `~/.meetnote/recordings/` for meetnote; a red dot on the face while it runs; needs macOS 14.2+ and asks for Microphone + audio-recording access once), transcription server (Whisper URL, model, API key for meeting transcripts; saved to `~/.meetnote/config.json`), remote presence, the mic rule, beta updates, verbose logging, start at login |
 | **Show log…** | follow onIT's log live, with Copy and Reveal buttons |
 | **Check for updates…** | |
 | **Quit onIT** | |

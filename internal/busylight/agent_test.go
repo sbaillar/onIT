@@ -168,3 +168,28 @@ func TestMicSplitsMeetingFromCall(t *testing.T) {
 		t.Fatalf("mic released: Shown = %q, want meeting", got)
 	}
 }
+
+func TestInCallNeedsTeamsMeetingAndMic(t *testing.T) {
+	a := NewAgent()
+	for _, c := range []struct {
+		state    string
+		mic      bool
+		override string
+		want     bool
+	}{
+		{"meeting", true, "", true},
+		{"sharing", true, "", true},
+		{"meeting", false, "", false},        // calendar Busy, no audio
+		{"available", true, "", false},       // mic rule may show "call", but no Teams meeting
+		{"meeting", true, "available", true}, // override changes the light, not the recording
+		{"off", true, "meeting", false},      // manual "meeting" without Teams
+	} {
+		a.mu.Lock()
+		a.teamsUp, a.teamsState, a.override = true, c.state, c.override
+		a.mu.Unlock()
+		a.micActive.Store(c.mic)
+		if got := a.InCall(); got != c.want {
+			t.Errorf("teams=%s mic=%v override=%q: InCall=%v, want %v", c.state, c.mic, c.override, got, c.want)
+		}
+	}
+}
