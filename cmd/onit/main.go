@@ -856,9 +856,10 @@ func main() {
 	// grow and shrink, and any pop-up opened near the bottom of the short
 	// window had nowhere to unfold into (Fyne clips pop-ups to the canvas).
 	// Built once and hidden on close so update() keeps its widget pointers.
+	transcribeBtn := widget.NewButton("Transcription server...", func() { showTranscriptionSetup(a) })
 	settingsWin := a.NewWindow("onIT Settings")
 	settingsWin.SetContent(container.NewVBox(
-		fwLbl, fwBtn, graphSetupBtn, remoteCheck, micCheck, clockCheck, betaCheck, verboseCheck, loginCheck))
+		fwLbl, fwBtn, graphSetupBtn, transcribeBtn, remoteCheck, micCheck, clockCheck, betaCheck, verboseCheck, loginCheck))
 	settingsWin.SetCloseIntercept(settingsWin.Hide)
 	settingsWin.Resize(fyne.NewSize(300, 0))
 	showSettings = func() { settingsWin.Show(); settingsWin.RequestFocus() }
