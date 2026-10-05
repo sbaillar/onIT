@@ -81,7 +81,7 @@ needed. The menu also has:
 |---|---|
 | **Pair busylight…** | scan for the device over Bluetooth (hidden while it's already connected that way) |
 | **Spin the wheel** | run the emoji roulette |
-| **Settings…** | firmware updates, presence setup, remote presence, the mic rule, beta updates, verbose logging, start at login |
+| **Settings…** | firmware updates, presence setup, transcription server (Whisper URL, model, API key for meeting transcripts; saved to `~/.meetnote/config.json`), remote presence, the mic rule, beta updates, verbose logging, start at login |
 | **Show log…** | follow onIT's log live, with Copy and Reveal buttons |
 | **Check for updates…** | |
 | **Quit onIT** | |
